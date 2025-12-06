@@ -478,7 +478,42 @@ async def process_expiry_date(message: Message, state: FSMContext):
     """Ввод срока годности"""
     try:
         date_str = message.text.strip()
-        expiry_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+        # Accept formats:
+        # - DD.MM.YYYY  -> exact date
+        # - MM.YYYY or MM.YY -> interpret as month/year; expiry becomes last day of PREVIOUS month
+        expiry_date = None
+
+        # Try full date first
+        try:
+            expiry_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+        except Exception:
+            # Try month.year (MM.YYYY or MM.YY)
+            parts = date_str.split('.')
+            if len(parts) == 2:
+                month_part = parts[0]
+                year_part = parts[1]
+                try:
+                    month = int(month_part)
+                    year = int(year_part)
+                    # If year is two digits, expand to 2000+YY (reasonable assumption)
+                    if year < 100:
+                        year += 2000
+                    # Compute previous month
+                    if month == 1:
+                        prev_month = 12
+                        prev_year = year - 1
+                    else:
+                        prev_month = month - 1
+                        prev_year = year
+                    # Last day of previous month
+                    import calendar
+                    last_day = calendar.monthrange(prev_year, prev_month)[1]
+                    expiry_date = datetime(prev_year, prev_month, last_day).date()
+                except Exception:
+                    expiry_date = None
+
+        if not expiry_date:
+            raise ValueError("invalid date format")
 
         # Store as string to keep FSM storage serialization safe (Redis JSON)
         await state.update_data(item_expiry_date=expiry_date.strftime('%d.%m.%Y'))
