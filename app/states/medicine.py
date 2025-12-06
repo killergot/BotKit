@@ -22,3 +22,9 @@ class MedicineUploadStates(StatesGroup):
 
     # Подтверждение
     confirming = State()
+
+class ShareKitStates(StatesGroup):
+    """Состояния для шаринга аптечки"""
+    choosing_kit = State()
+    entering_username = State()
+    confirming = State()

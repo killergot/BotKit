@@ -2,6 +2,8 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio import Redis
 
 from app.core.config import Config, load_config
 from app.handlers import router
@@ -17,10 +19,12 @@ async def main():
                '[%(asctime)s] - %(name)s - %(message)s')
     # Загружаем конфиг в переменную config
     config: Config = load_config()
+    redis = Redis(host='localhost', port=6379, db=0, decode_responses=True)
+    storage = RedisStorage(redis=redis)
 
     # Инициализируем бот и диспетчер
     bot = Bot(token=config.tg_bot.token)
-    dp = Dispatcher()
+    dp = Dispatcher(storage=storage)
     dp.message.middleware(DbSessionMiddleware())
     dp.callback_query.middleware(DbSessionMiddleware())
     # Регистриуем роутеры в диспетчере

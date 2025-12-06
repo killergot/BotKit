@@ -5,6 +5,7 @@ from sqlalchemy import select, and_
 
 from app.database.models.medicine import Medicine, MedicineType, MedicineCategory
 from app.repositoryes.template import TemplateRepository
+from app.utils.verified_medicines import is_medicine_verified
 
 log = logging.getLogger(__name__)
 
@@ -64,12 +65,16 @@ class MedicineRepository(TemplateRepository):
             notes: Optional[str] = None
     ) -> Medicine:
         """Создать новое лекарство"""
+        # Проверяем, есть ли в списке верифицированных
+        is_verified = is_medicine_verified(name)
+
         new_medicine = Medicine(
             name=name,
             medicine_type=medicine_type,
             category=category,
             dosage=dosage,
-            notes=notes
+            notes=notes,
+            is_verified=is_verified  # Автоматически проставляем
         )
 
         self.db.add(new_medicine)

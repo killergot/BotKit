@@ -91,6 +91,8 @@ class Medicine(Base):
     # Дополнительные поля
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    is_verified: Mapped[bool] = mapped_column(default=False)  # Проверено ли лекарство
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=text("CURRENT_TIMESTAMP")
     )

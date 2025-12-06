@@ -205,8 +205,8 @@ async def process_select_existing_medicine(callback: CallbackQuery, state: FSMCo
     await state.update_data(
         selected_medicine_id=medicine.id,
         medicine_name=medicine.name,
-        medicine_type=medicine.medicine_type,
-        medicine_category=medicine.category,
+        medicine_type=medicine.medicine_type.name,  # Сохраняем name, не сам enum!
+        medicine_category=medicine.category.name,  # Сохраняем name, не сам enum!
         medicine_dosage=medicine.dosage,
         medicine_notes=medicine.notes,
         using_existing_medicine=True
@@ -252,7 +252,7 @@ async def process_medicine_type(callback: CallbackQuery, state: FSMContext):
     type_name = callback.data.split(":")[1]
     medicine_type = MedicineType[type_name]
 
-    await state.update_data(medicine_type=medicine_type)
+    await state.update_data(medicine_type=type_name)
 
     await callback.message.edit_text(
         LEXICON_RU['upload_choose_category'],
@@ -268,7 +268,7 @@ async def process_medicine_category(callback: CallbackQuery, state: FSMContext):
     category_name = callback.data.split(":")[1]
     category = MedicineCategory[category_name]
 
-    await state.update_data(medicine_category=category)
+    await state.update_data(medicine_category=category_name)
 
     await callback.message.edit_text(
         LEXICON_RU['upload_enter_dosage'],
@@ -332,7 +332,8 @@ async def process_quantity(message: Message, state: FSMContext):
         if quantity < 0:
             raise ValueError
 
-        await state.update_data(item_quantity=quantity)
+        # Сохраняем как строку!
+        await state.update_data(item_quantity=str(quantity))
         await message.answer(LEXICON_RU['upload_enter_unit'])
         await state.set_state(MedicineUploadStates.entering_unit)
 
@@ -438,13 +439,18 @@ async def show_confirmation(message: Message, state: FSMContext):
     """Показать сводку и запросить подтверждение"""
     data = await state.get_data()
 
+    # Восстанавливаем enum из строк для отображения
+    medicine_type = MedicineType[data.get('medicine_type')] if data.get('medicine_type') else None
+    medicine_category = MedicineCategory[data.get('medicine_category')] if data.get('medicine_category') else None
+
+    # quantity уже строка, используем как есть
     confirmation_text = LEXICON_RU['upload_confirm'].format(
         kit_name=data.get('kit_name', '-'),
         name=data.get('medicine_name', '-'),
-        medicine_type=data.get('medicine_type').value if data.get('medicine_type') else '-',
-        category=data.get('medicine_category').value if data.get('medicine_category') else '-',
+        medicine_type=medicine_type.value if medicine_type else '-',
+        category=medicine_category.value if medicine_category else '-',
         dosage=data.get('medicine_dosage') or '-',
-        quantity=data.get('item_quantity', '-'),
+        quantity=data.get('item_quantity', '-'),  # Это уже строка
         unit=data.get('item_unit', '-'),
         expiry_date=data.get('item_expiry_date').strftime('%d.%m.%Y') if data.get('item_expiry_date') else '-',
         location=data.get('item_location') or '-',
@@ -468,6 +474,13 @@ async def save_medicine(
     item_repo = MedicineItemRepository(db_session)
 
     try:
+        # Восстанавливаем enum из строк
+        medicine_type = MedicineType[data['medicine_type']]
+        medicine_category = MedicineCategory[data['medicine_category']]
+
+        # Восстанавливаем Decimal из строки
+        quantity = Decimal(data['item_quantity'])
+
         # Проверяем, используем ли существующее лекарство
         if data.get('using_existing_medicine') and data.get('selected_medicine_id'):
             medicine_id = data['selected_medicine_id']
@@ -475,8 +488,8 @@ async def save_medicine(
             # Создаем или получаем лекарство из справочника
             medicine = await medicine_repo.get_or_create(
                 name=data['medicine_name'],
-                medicine_type=data['medicine_type'],
-                category=data['medicine_category'],
+                medicine_type=medicine_type,
+                category=medicine_category,
                 dosage=data.get('medicine_dosage')
             )
 
@@ -493,7 +506,7 @@ async def save_medicine(
         await item_repo.create(
             medicine_kit_id=data['medicine_kit_id'],
             medicine_id=medicine_id,
-            quantity=data['item_quantity'],
+            quantity=quantity,  # Передаем Decimal в репозиторий
             unit=data['item_unit'],
             expiry_date=data.get('item_expiry_date'),
             location=data.get('item_location'),

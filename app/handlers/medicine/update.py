@@ -1,0 +1,148 @@
+import decimal
+from decimal import Decimal
+from aiogram import Router, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, CallbackQuery
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.keyboard.medicine_kb import (
+    get_user_items_keyboard,
+    get_update_field_keyboard,
+    get_cancel_keyboard
+)
+from app.lexicon.lexicon import LEXICON_RU
+from app.repositoryes.MedicineKitRepository import MedicineKitRepository
+from app.repositoryes.MedicineItemRepository import MedicineItemRepository
+
+router = Router()
+
+
+class UpdateItemStates(StatesGroup):
+    """Состояния для обновления item"""
+    choosing_item = State()
+    choosing_field = State()
+    entering_new_value = State()
+
+
+@router.message(Command("update"))
+async def cmd_update(message: Message, state: FSMContext, db_session: AsyncSession):
+    """Обновление item"""
+    user_id = message.from_user.id
+
+    # Получаем все items пользователя
+    kit_repo = MedicineKitRepository(db_session)
+    kits = await kit_repo.get_by_user(user_id)
+
+    if not kits:
+        await message.answer(LEXICON_RU['update_no_kits'])
+        return
+
+    # Собираем все items
+    item_repo = MedicineItemRepository(db_session)
+    all_items = []
+
+    for kit in kits:
+        items = await item_repo.get_by_kit(kit.id)
+        all_items.extend(items)
+
+    if not all_items:
+        await message.answer(LEXICON_RU['update_no_items'])
+        return
+
+    await message.answer(
+        LEXICON_RU['update_choose_item'],
+        reply_markup=get_user_items_keyboard(all_items)
+    )
+    await state.set_state(UpdateItemStates.choosing_item)
+
+
+@router.callback_query(UpdateItemStates.choosing_item, F.data.startswith("update_item:"))
+async def process_item_selection(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession):
+    """Выбор item для обновления"""
+    item_id = int(callback.data.split(":")[1])
+
+    item_repo = MedicineItemRepository(db_session)
+    item = await item_repo.get(item_id)
+
+    if not item:
+        await callback.answer("Лекарство не найдено", show_alert=True)
+        return
+
+    await state.update_data(item_id=item_id)
+
+    # Показываем текущие данные и выбор поля
+    current_info = LEXICON_RU['update_current_info'].format(
+        name=item.medicine.name,
+        quantity=item.quantity,
+        unit=item.unit,
+        location=item.location or '-',
+        notes=item.notes or '-'
+    )
+
+    await callback.message.edit_text(
+        current_info,
+        reply_markup=get_update_field_keyboard()
+    )
+    await state.set_state(UpdateItemStates.choosing_field)
+    await callback.answer()
+
+
+@router.callback_query(UpdateItemStates.choosing_field, F.data.startswith("update_field:"))
+async def process_field_selection(callback: CallbackQuery, state: FSMContext):
+    """Выбор поля для обновления"""
+    field = callback.data.split(":")[1]
+
+    await state.update_data(update_field=field)
+
+    # Сообщения для каждого поля
+    prompts = {
+        'quantity': LEXICON_RU['update_enter_quantity'],
+        'location': LEXICON_RU['update_enter_location'],
+        'notes': LEXICON_RU['update_enter_notes']
+    }
+
+    await callback.message.edit_text(
+        prompts.get(field, "Введите новое значение:"),
+        reply_markup=get_cancel_keyboard()
+    )
+    await state.set_state(UpdateItemStates.entering_new_value)
+    await callback.answer()
+
+
+@router.message(UpdateItemStates.entering_new_value, F.text)
+async def process_new_value(message: Message, state: FSMContext, db_session: AsyncSession):
+    """Ввод нового значения"""
+    data = await state.get_data()
+    item_id = data['item_id']
+    field = data['update_field']
+    new_value = message.text.strip()
+
+    item_repo = MedicineItemRepository(db_session)
+
+    try:
+        # Валидация и обновление в зависимости от поля
+        if field == 'quantity':
+            quantity = Decimal(new_value.replace(',', '.'))
+            if quantity < 0:
+                raise ValueError
+            await item_repo.update(item_id, quantity=str(quantity))
+        elif field == 'location':
+            await item_repo.update(item_id, location=new_value)
+        elif field == 'notes':
+            await item_repo.update(item_id, notes=new_value)
+
+        await message.answer(LEXICON_RU['update_success'])
+        await state.clear()
+
+    except (ValueError, decimal.InvalidOperation):
+        await message.answer(LEXICON_RU['error_invalid_number'])
+
+
+@router.callback_query(UpdateItemStates.entering_new_value, F.data == "cancel_update")
+async def cancel_update(callback: CallbackQuery, state: FSMContext):
+    """Отмена обновления"""
+    await callback.message.edit_text(LEXICON_RU['update_cancelled'])
+    await state.clear()
+    await callback.answer()
