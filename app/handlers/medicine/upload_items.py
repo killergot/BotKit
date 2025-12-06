@@ -1,6 +1,6 @@
 import decimal
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from typing import Optional, List
 
 from aiogram import Router, F
@@ -29,6 +29,65 @@ router = Router()
 
 # Минимальный процент совпадения для показа похожих лекарств
 SIMILARITY_THRESHOLD = 60
+
+
+async def _store_last_bot_message(state: FSMContext, sent_message: Message | None = None, *, callback_message: CallbackQuery | None = None):
+    """Store last bot message id and text in FSM state for later editing."""
+    if sent_message:
+        await state.update_data(
+            last_bot_message_id=sent_message.message_id,
+            last_bot_message_text=sent_message.text or sent_message.html_text or '',
+            last_bot_chat_id=sent_message.chat.id,
+            last_bot_has_reply_markup=bool(sent_message.reply_markup)
+        )
+    elif callback_message:
+        # callback_message is a CallbackQuery; use its message
+        msg = callback_message.message
+        await state.update_data(
+            last_bot_message_id=msg.message_id,
+            last_bot_message_text=msg.text or '',
+            last_bot_chat_id=msg.chat.id,
+            last_bot_has_reply_markup=bool(msg.reply_markup)
+        )
+
+
+async def _append_recommendation(state: FSMContext, bot, recommendation: str):
+    """Append recommendation text to the last stored bot message. If editing fails, send as a new message."""
+    data = await state.get_data()
+    msg_id = data.get('last_bot_message_id')
+    chat_id = data.get('last_bot_chat_id')
+    text = data.get('last_bot_message_text', '')
+
+    has_markup = data.get('last_bot_has_reply_markup', False)
+
+    # If the last bot message had an inline keyboard, avoid editing it (that would remove the keyboard).
+    if msg_id and chat_id and text is not None and not has_markup:
+        new_text = text + "\n\n" + recommendation
+        try:
+            await bot.edit_message_text(new_text, chat_id=chat_id, message_id=msg_id)
+            await state.update_data(last_bot_message_text=new_text)
+            return
+        except Exception:
+            pass
+
+    # Otherwise / fallback: send as a new message (so we don't lose keyboards)
+    await bot.send_message(chat_id=chat_id or None, text=recommendation)
+
+
+def _fits_numeric(value: Decimal, precision: int = 10, scale: int = 2) -> bool:
+    """Check if Decimal fits into Numeric(precision, scale).
+
+    We scale the value by 10**scale and check that the resulting integer
+    has at most `precision` digits.
+    """
+    try:
+        scaled = (value * (10 ** scale)).to_integral_value(rounding=ROUND_DOWN)
+    except Exception:
+        return False
+
+    unscaled_abs = abs(int(scaled))
+    return len(str(unscaled_abs)) <= precision
+
 
 
 def find_similar_medicines(search_name: str, all_medicines: List[Medicine], limit: int = 3) -> List[
@@ -77,15 +136,17 @@ async def cmd_upload_start(message: Message,
 
     if not kits:
         # Если нет аптечек, создаем первую
-        await message.answer(LEXICON_RU['upload_no_kits'])
+        sent = await message.answer(LEXICON_RU['upload_no_kits'])
+        await _store_last_bot_message(state, sent_message=sent)
         await state.set_state(MedicineUploadStates.choosing_kit)
         await state.update_data(creating_first_kit=True)
     else:
         # Показываем список аптечек
-        await message.answer(
+        sent = await message.answer(
             LEXICON_RU['upload_start'],
             reply_markup=get_medicine_kit_keyboard(kits)
         )
+        await _store_last_bot_message(state, sent_message=sent)
         await state.set_state(MedicineUploadStates.choosing_kit)
 
 
@@ -104,11 +165,12 @@ async def process_kit_name(
     # Создаем аптечку
     kit = await kit_repo.create(name=kit_name, user_ids=[user_id])
 
-    await message.answer(LEXICON_RU['upload_kit_created'].format(name=kit.name))
+    sent = await message.answer(LEXICON_RU['upload_kit_created'].format(name=kit.name))
 
     # Сохраняем ID аптечки и переходим к вводу названия лекарства
     await state.update_data(medicine_kit_id=kit.id, kit_name=kit.name)
-    await message.answer(LEXICON_RU['upload_enter_name'])
+    sent2 = await message.answer(LEXICON_RU['upload_enter_name'])
+    await _store_last_bot_message(state, sent_message=sent2)
     await state.set_state(MedicineUploadStates.entering_name)
 
 
@@ -148,6 +210,14 @@ async def process_medicine_name(message: Message, state: FSMContext, db_session:
         await message.answer(LEXICON_RU['error_empty_input'])
         return
 
+    # Validate minimal name length
+    if len(name) < 2:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await _append_recommendation(state, message.bot, LEXICON_RU['recommend_name_too_short'])
+        return
     # Сохраняем введенное название
     await state.update_data(search_medicine_name=name)
 
@@ -174,18 +244,20 @@ async def process_medicine_name(message: Message, state: FSMContext, db_session:
             # Извлекаем только объекты Medicine
             medicines_only = [med for med, _ in similar]
 
-            await message.answer(
+            sent = await message.answer(
                 similar_text,
                 reply_markup=get_similar_medicines_keyboard(medicines_only)
             )
+            await _store_last_bot_message(state, sent_message=sent)
             return
 
     # Если похожих не найдено, продолжаем создание нового
     await state.update_data(medicine_name=name)
-    await message.answer(
+    sent = await message.answer(
         LEXICON_RU['upload_choose_type'],
         reply_markup=get_medicine_type_keyboard()
     )
+    await _store_last_bot_message(state, sent_message=sent)
     await state.set_state(MedicineUploadStates.choosing_type)
 
 
@@ -242,6 +314,7 @@ async def process_create_new_medicine(callback: CallbackQuery, state: FSMContext
         LEXICON_RU['upload_choose_type'],
         reply_markup=get_medicine_type_keyboard()
     )
+    await _store_last_bot_message(state, callback_message=callback)
     await state.set_state(MedicineUploadStates.choosing_type)
     await callback.answer()
 
@@ -258,6 +331,7 @@ async def process_medicine_type(callback: CallbackQuery, state: FSMContext):
         LEXICON_RU['upload_choose_category'],
         reply_markup=get_medicine_category_keyboard()
     )
+    await _store_last_bot_message(state, callback_message=callback)
     await state.set_state(MedicineUploadStates.choosing_category)
     await callback.answer()
 
@@ -274,6 +348,7 @@ async def process_medicine_category(callback: CallbackQuery, state: FSMContext):
         LEXICON_RU['upload_enter_dosage'],
         reply_markup=get_skip_keyboard()
     )
+    await _store_last_bot_message(state, callback_message=callback)
     await state.set_state(MedicineUploadStates.entering_dosage)
     await callback.answer()
 
@@ -284,10 +359,11 @@ async def process_dosage(message: Message, state: FSMContext):
     dosage = message.text.strip()
     await state.update_data(medicine_dosage=dosage)
 
-    await message.answer(
+    sent = await message.answer(
         LEXICON_RU['upload_enter_medicine_notes'],
         reply_markup=get_skip_keyboard()
     )
+    await _store_last_bot_message(state, sent_message=sent)
     await state.set_state(MedicineUploadStates.entering_medicine_notes)
 
 
@@ -310,7 +386,8 @@ async def process_medicine_notes(message: Message, state: FSMContext):
     notes = message.text.strip()
     await state.update_data(medicine_notes=notes)
 
-    await message.answer(LEXICON_RU['upload_enter_quantity'])
+    sent = await message.answer(LEXICON_RU['upload_enter_quantity'])
+    await _store_last_bot_message(state, sent_message=sent)
     await state.set_state(MedicineUploadStates.entering_quantity)
 
 
@@ -332,13 +409,37 @@ async def process_quantity(message: Message, state: FSMContext):
         if quantity < 0:
             raise ValueError
 
+        # Validate fits model Numeric(10,2)
+        if not _fits_numeric(quantity, precision=10, scale=2):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await _append_recommendation(state, message.bot, LEXICON_RU['recommend_numeric_too_large'])
+            return
+
+        # Minimal allowed value
+        min_val = Decimal('0.01')
+        if quantity < min_val:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await _append_recommendation(state, message.bot, LEXICON_RU['recommend_min_quantity'])
+            return
+
         # Сохраняем как строку!
         await state.update_data(item_quantity=str(quantity))
-        await message.answer(LEXICON_RU['upload_enter_unit'])
+        sent = await message.answer(LEXICON_RU['upload_enter_unit'])
+        await _store_last_bot_message(state, sent_message=sent)
         await state.set_state(MedicineUploadStates.entering_unit)
 
     except (ValueError, decimal.InvalidOperation):
-        await message.answer(LEXICON_RU['error_invalid_number'])
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await _append_recommendation(state, message.bot, LEXICON_RU['recommend_invalid_quantity'])
 
 
 @router.message(MedicineUploadStates.entering_unit, F.text)
@@ -347,14 +448,28 @@ async def process_unit(message: Message, state: FSMContext):
     unit = message.text.strip()
 
     if not unit:
-        await message.answer(LEXICON_RU['error_empty_input'])
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await _append_recommendation(state, message.bot, LEXICON_RU['recommend_invalid_unit'])
+        return
+
+    # Validate unit length
+    if len(unit) > 10:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await _append_recommendation(state, message.bot, LEXICON_RU['recommend_unit_too_long'])
         return
 
     await state.update_data(item_unit=unit)
-    await message.answer(
+    sent = await message.answer(
         LEXICON_RU['upload_enter_expiry_date'],
         reply_markup=get_skip_keyboard()
     )
+    await _store_last_bot_message(state, sent_message=sent)
     await state.set_state(MedicineUploadStates.entering_expiry_date)
 
 
@@ -365,15 +480,21 @@ async def process_expiry_date(message: Message, state: FSMContext):
         date_str = message.text.strip()
         expiry_date = datetime.strptime(date_str, "%d.%m.%Y").date()
 
-        await state.update_data(item_expiry_date=expiry_date)
-        await message.answer(
+        # Store as string to keep FSM storage serialization safe (Redis JSON)
+        await state.update_data(item_expiry_date=expiry_date.strftime('%d.%m.%Y'))
+        sent = await message.answer(
             LEXICON_RU['upload_enter_location'],
             reply_markup=get_skip_keyboard()
         )
+        await _store_last_bot_message(state, sent_message=sent)
         await state.set_state(MedicineUploadStates.entering_location)
 
     except ValueError:
-        await message.answer(LEXICON_RU['error_invalid_date'])
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await _append_recommendation(state, message.bot, LEXICON_RU['recommend_invalid_date'])
 
 
 @router.callback_query(MedicineUploadStates.entering_expiry_date, F.data == "skip")
@@ -395,10 +516,11 @@ async def process_location(message: Message, state: FSMContext):
     location = message.text.strip()
     await state.update_data(item_location=location)
 
-    await message.answer(
+    sent = await message.answer(
         LEXICON_RU['upload_enter_item_notes'],
         reply_markup=get_skip_keyboard()
     )
+    await _store_last_bot_message(state, sent_message=sent)
     await state.set_state(MedicineUploadStates.entering_item_notes)
 
 
@@ -444,6 +566,17 @@ async def show_confirmation(message: Message, state: FSMContext):
     medicine_category = MedicineCategory[data.get('medicine_category')] if data.get('medicine_category') else None
 
     # quantity уже строка, используем как есть
+    expiry_val = data.get('item_expiry_date')
+    if isinstance(expiry_val, str):
+        expiry_display = expiry_val
+    elif expiry_val:
+        try:
+            expiry_display = expiry_val.strftime('%d.%m.%Y')
+        except Exception:
+            expiry_display = str(expiry_val)
+    else:
+        expiry_display = '-'
+
     confirmation_text = LEXICON_RU['upload_confirm'].format(
         kit_name=data.get('kit_name', '-'),
         name=data.get('medicine_name', '-'),
@@ -452,7 +585,7 @@ async def show_confirmation(message: Message, state: FSMContext):
         dosage=data.get('medicine_dosage') or '-',
         quantity=data.get('item_quantity', '-'),  # Это уже строка
         unit=data.get('item_unit', '-'),
-        expiry_date=data.get('item_expiry_date').strftime('%d.%m.%Y') if data.get('item_expiry_date') else '-',
+        expiry_date=expiry_display,
         location=data.get('item_location') or '-',
         notes=data.get('item_notes') or '-'
     )
@@ -480,6 +613,17 @@ async def save_medicine(
 
         # Восстанавливаем Decimal из строки
         quantity = Decimal(data['item_quantity'])
+        # Normalize expiry_date: stored as string in state, parse to date for DB
+        expiry_raw = data.get('item_expiry_date')
+        expiry_date_obj = None
+        if expiry_raw:
+            if isinstance(expiry_raw, str):
+                try:
+                    expiry_date_obj = datetime.strptime(expiry_raw, '%d.%m.%Y').date()
+                except Exception:
+                    expiry_date_obj = None
+            else:
+                expiry_date_obj = expiry_raw
 
         # Проверяем, используем ли существующее лекарство
         if data.get('using_existing_medicine') and data.get('selected_medicine_id'):
@@ -508,7 +652,7 @@ async def save_medicine(
             medicine_id=medicine_id,
             quantity=quantity,  # Передаем Decimal в репозиторий
             unit=data['item_unit'],
-            expiry_date=data.get('item_expiry_date'),
+            expiry_date=expiry_date_obj,
             location=data.get('item_location'),
             notes=data.get('item_notes')
         )
