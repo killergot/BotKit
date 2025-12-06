@@ -1,0 +1,9 @@
+test/
+.venv/
+.idea/
+__pycache__/
+.env
+.mypy_cache/
+.vscode/
+test.py
+Data/
