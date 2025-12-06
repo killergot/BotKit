@@ -51,6 +51,7 @@ async def main():
     dp = Dispatcher(storage=storage)
     dp.message.middleware(DbSessionMiddleware())
     dp.message.middleware(UserCheckMiddleware())
+    dp.message.middleware(RedisMiddleware(redis))
     dp.callback_query.middleware(DbSessionMiddleware())
     dp.callback_query.middleware(UserCheckMiddleware())
     dp.callback_query.middleware(RedisMiddleware(redis))
