@@ -1,9 +1,11 @@
 import uuid
+import json
 from aiogram import Router, F
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
 
 from app.keyboard.medicine_kb import (
     get_share_kit_keyboard,
@@ -16,8 +18,26 @@ from app.states.medicine import ShareKitStates
 
 router = Router()
 
-# Временное хранилище запросов (в production лучше использовать Redis или БД)
-share_requests = {}
+
+# Функции для работы с Redis
+async def save_share_request(redis: Redis, request_id: str, data: dict, ttl: int = 3600):
+    """Сохранить запрос на шаринг в Redis"""
+    await redis.setex(
+        f"share_request:{request_id}",
+        ttl,  # TTL 1 час
+        json.dumps(data)
+    )
+
+
+async def get_share_request(redis: Redis, request_id: str) -> dict | None:
+    """Получить запрос на шаринг из Redis"""
+    data = await redis.get(f"share_request:{request_id}")
+    return json.loads(data) if data else None
+
+
+async def delete_share_request(redis: Redis, request_id: str):
+    """Удалить запрос на шаринг из Redis"""
+    await redis.delete(f"share_request:{request_id}")
 
 
 @router.message(Command("share"))
@@ -25,7 +45,6 @@ async def cmd_share(message: Message, state: FSMContext, db_session: AsyncSessio
     """Начало процесса шаринга аптечки"""
     user_id = message.from_user.id
 
-    # Получаем аптечки пользователя
     kit_repo = MedicineKitRepository(db_session)
     kits = await kit_repo.get_by_user(user_id)
 
@@ -60,7 +79,12 @@ async def process_share_kit_selection(callback: CallbackQuery, state: FSMContext
 
 
 @router.message(ShareKitStates.entering_username, F.text)
-async def process_share_username(message: Message, state: FSMContext, db_session: AsyncSession):
+async def process_share_username(
+        message: Message,
+        state: FSMContext,
+        db_session: AsyncSession,
+        redis: Redis  # Добавляем Redis через dependency injection
+):
     """Ввод username для шаринга"""
     username = message.text.strip().lstrip('@')
     user_id = message.from_user.id
@@ -87,7 +111,7 @@ async def process_share_username(message: Message, state: FSMContext, db_session
         await state.clear()
         return
 
-    # Проверка, не расшарена ли уже аптечка этому пользователю
+    # Проверка, не расшарена ли уже аптечка
     data = await state.get_data()
     kit_id = data['share_kit_id']
 
@@ -101,7 +125,7 @@ async def process_share_username(message: Message, state: FSMContext, db_session
 
     # Создаем запрос на шаринг
     request_id = str(uuid.uuid4())
-    share_requests[request_id] = {
+    request_data = {
         'from_user_id': user_id,
         'from_username': from_username,
         'to_user_id': target_user.id,
@@ -109,12 +133,12 @@ async def process_share_username(message: Message, state: FSMContext, db_session
         'kit_name': data['share_kit_name']
     }
 
-    # Отправляем запрос целевому пользователю
-    from aiogram import Bot
-    bot: Bot = message.bot
+    # Сохраняем в Redis
+    await save_share_request(redis, request_id, request_data)
 
+    # Отправляем запрос целевому пользователю
     try:
-        await bot.send_message(
+        await message.bot.send_message(
             chat_id=target_user.id,
             text=LEXICON_RU['share_request_received'].format(
                 from_username=from_username,
@@ -136,16 +160,21 @@ async def process_share_username(message: Message, state: FSMContext, db_session
 
 
 @router.callback_query(F.data.startswith("accept_share:"))
-async def process_accept_share(callback: CallbackQuery, db_session: AsyncSession):
+async def process_accept_share(
+        callback: CallbackQuery,
+        db_session: AsyncSession,
+        redis: Redis  # Добавляем Redis
+):
     """Принятие запроса на шаринг"""
     request_id = callback.data.split(":")[1]
 
-    if request_id not in share_requests:
+    # Получаем из Redis
+    request = await get_share_request(redis, request_id)
+
+    if not request:
         await callback.answer("Запрос устарел", show_alert=True)
         await callback.message.delete()
         return
-
-    request = share_requests[request_id]
 
     # Добавляем пользователя к аптечке
     kit_repo = MedicineKitRepository(db_session)
@@ -155,11 +184,8 @@ async def process_accept_share(callback: CallbackQuery, db_session: AsyncSession
         await callback.answer("Ошибка при добавлении", show_alert=True)
         return
 
-    # Обновляем название аптечки для нового пользователя
     kit = await kit_repo.get(request['kit_id'])
-    new_name = f"{kit.name} (@{request['from_username']})"
 
-    # На самом деле название аптечки общее для всех, поэтому просто уведомляем
     await callback.message.edit_text(
         LEXICON_RU['share_accepted'].format(kit_name=kit.name)
     )
@@ -176,19 +202,20 @@ async def process_accept_share(callback: CallbackQuery, db_session: AsyncSession
     except:
         pass
 
-    # Удаляем запрос
-    del share_requests[request_id]
+    # Удаляем запрос из Redis
+    await delete_share_request(redis, request_id)
     await callback.answer("✅ Принято!")
 
 
 @router.callback_query(F.data.startswith("decline_share:"))
-async def process_decline_share(callback: CallbackQuery):
+async def process_decline_share(callback: CallbackQuery, redis: Redis):
     """Отклонение запроса на шаринг"""
     request_id = callback.data.split(":")[1]
 
-    if request_id in share_requests:
-        request = share_requests[request_id]
+    # Получаем из Redis
+    request = await get_share_request(redis, request_id)
 
+    if request:
         # Уведомляем отправителя об отклонении
         try:
             await callback.bot.send_message(
@@ -198,7 +225,8 @@ async def process_decline_share(callback: CallbackQuery):
         except:
             pass
 
-        del share_requests[request_id]
+        # Удаляем из Redis
+        await delete_share_request(redis, request_id)
 
     await callback.message.edit_text(LEXICON_RU['share_declined'])
     await callback.answer()
