@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь проект
 COPY . .
 
+RUN chmod +x /app/scripts/run.sh
 RUN sed -i 's/^MODE=.*/MODE=prod/' /app/.env
 
 
