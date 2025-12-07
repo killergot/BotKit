@@ -196,7 +196,7 @@ def get_trash_kits_keyboard(kits: list) -> InlineKeyboardMarkup:
 
     for kit in kits:
         builder.button(
-            text=f'Восстановить kit.name?',
+            text=f'Восстановить {kit.name}?',
             callback_data=f"restore_kit:{kit.id}"
         )
 
