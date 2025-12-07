@@ -6,6 +6,7 @@ from sqlalchemy import select, and_
 from app.database.models.medicine import Medicine, MedicineType, MedicineCategory
 from app.repositoryes.template import TemplateRepository
 from app.utils.verified_medicines import is_medicine_verified
+from app.utils.flags import Flags
 
 log = logging.getLogger(__name__)
 
@@ -18,8 +19,9 @@ class MedicineRepository(TemplateRepository):
             name: Optional[str] = None,
             medicine_type: Optional[MedicineType] = None,
             category: Optional[MedicineCategory] = None,
-            dosage: Optional[str] = None
-    ) -> List[Medicine]:
+            dosage: Optional[str] = None,
+            verified: Optional[bool] = None
+        ) -> List[Medicine]:
         """Получить все лекарства с фильтрами"""
         query = select(Medicine)
         filters = []
@@ -32,6 +34,13 @@ class MedicineRepository(TemplateRepository):
             filters.append(Medicine.category == category)
         if dosage is not None:
             filters.append(Medicine.dosage == dosage)
+
+        # Фильтрация по флагам: если verified=True, возвращаем только те, у которых установлен бит VERIFIED
+        if verified is not None:
+            if verified:
+                filters.append(Medicine.flags.op('&')(Flags.VERIFIED) != 0)
+            else:
+                filters.append(Medicine.flags.op('&')(Flags.VERIFIED) == 0)
 
         if filters:
             query = query.where(and_(*filters))
@@ -62,11 +71,16 @@ class MedicineRepository(TemplateRepository):
             medicine_type: MedicineType,
             category: MedicineCategory,
             dosage: Optional[str] = None,
-            notes: Optional[str] = None
+            notes: Optional[str] = None,
+            flags: Optional[int] = None
     ) -> Medicine:
         """Создать новое лекарство"""
-        # Проверяем, есть ли в списке верифицированных
-        is_verified = is_medicine_verified(name)
+        # Если флаги переданы явно — используем их, иначе решаем в репозитории (на случай внешнего вызова)
+        if flags is None:
+            is_verified = is_medicine_verified(name)
+            flags_value = Flags.VERIFIED if is_verified else 0
+        else:
+            flags_value = int(flags)
 
         new_medicine = Medicine(
             name=name,
@@ -74,7 +88,7 @@ class MedicineRepository(TemplateRepository):
             category=category,
             dosage=dosage,
             notes=notes,
-            is_verified=is_verified  # Автоматически проставляем
+            flags=flags_value
         )
 
         self.db.add(new_medicine)
@@ -90,8 +104,9 @@ class MedicineRepository(TemplateRepository):
             medicine_type: Optional[MedicineType] = None,
             category: Optional[MedicineCategory] = None,
             dosage: Optional[str] = None,
-            notes: Optional[str] = None
-    ) -> Optional[Medicine]:
+            notes: Optional[str] = None,
+            flags: Optional[int] = None
+        ) -> Optional[Medicine]:
         """Обновить лекарство"""
         medicine = await self.get(medicine_id)
         if not medicine:
@@ -99,6 +114,14 @@ class MedicineRepository(TemplateRepository):
 
         if name is not None:
             medicine.name = name
+
+        # Если flags переданы явно, устанавливаем их (бизнес-логика по вычислению флагов
+        # должна происходить на уровне хэндлера)
+        if flags is not None:
+            try:
+                medicine.flags = int(flags)
+            except Exception:
+                pass
         if medicine_type is not None:
             medicine.medicine_type = medicine_type
         if category is not None:
@@ -129,7 +152,8 @@ class MedicineRepository(TemplateRepository):
             name: str,
             medicine_type: MedicineType,
             category: MedicineCategory,
-            dosage: Optional[str] = None
+            dosage: Optional[str] = None,
+            flags: Optional[int] = None
     ) -> Medicine:
         """Получить существующее или создать новое лекарство"""
         query = select(Medicine).where(
@@ -147,5 +171,6 @@ class MedicineRepository(TemplateRepository):
             name=name,
             medicine_type=medicine_type,
             category=category,
-            dosage=dosage
+            dosage=dosage,
+            flags=flags
         )

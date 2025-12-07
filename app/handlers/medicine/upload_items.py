@@ -22,8 +22,10 @@ from app.keyboard.medicine_kb import (
 from app.lexicon.lexicon import LEXICON_RU
 from app.repositoryes.MedicineKitRepository import MedicineKitRepository
 from app.repositoryes.MedicineRepository import MedicineRepository
+from app.utils.verified_medicines import is_medicine_verified
 from app.repositoryes.MedicineItemRepository import MedicineItemRepository
 from app.states.medicine import MedicineUploadStates
+from app.utils.flags import Flags
 
 router = Router()
 
@@ -223,7 +225,8 @@ async def process_medicine_name(message: Message, state: FSMContext, db_session:
 
     # Получаем все лекарства из базы
     medicine_repo = MedicineRepository(db_session)
-    all_medicines = await medicine_repo.get_all()
+    # Получаем только верифицированные лекарства для показа похожих
+    all_medicines = await medicine_repo.get_all(verified=True)
 
     if all_medicines:
         # Ищем похожие
@@ -236,7 +239,8 @@ async def process_medicine_name(message: Message, state: FSMContext, db_session:
                 similar_text += f"{i}. {med.name}"
                 if med.dosage:
                     similar_text += f" ({med.dosage})"
-                similar_text += f" - {med.medicine_type.value}, {med.category.value}\n"
+                similar_text += f" - {med.medicine_type.value}, {med.category.value}"
+                similar_text += "\n"
                 similar_text += f"   Совпадение: {score:.0f}%\n\n"
 
             similar_text += "Выберите подходящее или создайте новое:"
@@ -665,11 +669,17 @@ async def save_medicine(
             medicine_id = data['selected_medicine_id']
         else:
             # Создаем или получаем лекарство из справочника
+            # Решаем бизнес-логику в хэндлере: вычисляем флаги (например, VERIFIED) и
+            # передаём их в репозиторий при создании
+            is_verified = is_medicine_verified(data['medicine_name'])
+            flags_value = Flags.VERIFIED if is_verified else 0
+
             medicine = await medicine_repo.get_or_create(
                 name=data['medicine_name'],
                 medicine_type=medicine_type,
                 category=medicine_category,
-                dosage=data.get('medicine_dosage')
+                dosage=data.get('medicine_dosage'),
+                flags=flags_value
             )
 
             # Обновляем заметки если они есть

@@ -11,6 +11,8 @@ from functools import lru_cache
 from sqlalchemy.testing.config import test_schema
 
 from app.lexicon.lexicon import LEXICON_RU, LEXICON_COMMANDS_RU
+from app.lexicon.lexicon_admin import LEXICON_COMMANDS_RU as ADMIN_COMMANDS_RU
+from app.database.psql import config
 from app.keyboard.keyboard import kb_main
 from app.repositoryes.user_repository import UserRepository
 
@@ -45,4 +47,16 @@ async def command_start(message: Message,
 
 @router.message(Command('help'))
 async def command_help(message: Message):
-    await send_format_help(message)
+    # If sender is admin, show admin commands from lexicon_admin
+    try:
+        admin_id = int(config.tg_bot.ID_admin)
+    except Exception:
+        admin_id = None
+
+    if admin_id and message.from_user.id == admin_id:
+        formatted = "✔ *Список команд (admin):*\n"
+        for cmd, desc in ADMIN_COMMANDS_RU.items():
+            formatted += f"\n*{cmd}* : {desc}"
+        await message.answer(formatted, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await send_format_help(message)
