@@ -178,7 +178,7 @@ def get_user_kits_keyboard(kits: list) -> InlineKeyboardMarkup:
 
     for kit in kits:
         builder.button(
-            text=f"🗑 {kit.name}",
+            text=f"Удалить: {kit.name}",
             callback_data=f"delete_kit:{kit.id}"
         )
 
