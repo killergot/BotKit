@@ -2,7 +2,7 @@ from datetime import datetime, date
 from typing import Optional, List
 from sqlalchemy import (
     BigInteger, String, Integer, Text, Date, Numeric,
-    ForeignKey, TIMESTAMP, text, Enum, Table, Column
+    ForeignKey, TIMESTAMP, text, Enum, Table, Column, Boolean
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
@@ -57,6 +57,7 @@ class MedicineKit(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), default="Моя аптечка")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=text("CURRENT_TIMESTAMP")
     )

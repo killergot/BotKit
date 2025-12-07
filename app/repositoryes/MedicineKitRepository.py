@@ -17,7 +17,8 @@ class MedicineKitRepository(TemplateRepository):
     async def get_all(
             self,
             name: Optional[str] = None,
-            user_id: Optional[int] = None
+            user_id: Optional[int] = None,
+            deleted: Optional[bool] = None
     ) -> List[MedicineKit]:
         """Получить все аптечки с фильтрами"""
         query = select(MedicineKit)
@@ -29,9 +30,14 @@ class MedicineKitRepository(TemplateRepository):
         if user_id is not None:
             query = query.join(MedicineKit.users)
             filters.append(User.id == user_id)
+        
+        if deleted is not None:
+            filters.append(MedicineKit.deleted == deleted)
 
         if filters:
             query = query.where(and_(*filters))
+        
+        
 
         query = query.options(
             selectinload(MedicineKit.users),
@@ -50,9 +56,9 @@ class MedicineKitRepository(TemplateRepository):
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_by_user(self, user_id: int) -> List[MedicineKit]:
-        """Получить все аптечки пользователя"""
-        return await self.get_all(user_id=user_id)
+    async def get_by_user(self, user_id: int, deleted: Optional[bool] = None) -> List[MedicineKit]:
+        """Получить все аптечки пользователя (можно фильтровать по удалённым)"""
+        return await self.get_all(user_id=user_id, deleted=deleted)
 
     async def create(
             self,
@@ -78,7 +84,8 @@ class MedicineKitRepository(TemplateRepository):
             self,
             kit_id: int,
             name: Optional[str] = None,
-            description: Optional[str] = None
+            description: Optional[str] = None,
+            deleted: Optional[bool] = None,
     ) -> Optional[MedicineKit]:
         """Обновить аптечку"""
         kit = await self.get(kit_id)
@@ -89,6 +96,8 @@ class MedicineKitRepository(TemplateRepository):
             kit.name = name
         if description is not None:
             kit.description = description
+        if deleted is not None:
+            kit.deleted = deleted
 
         await self.db.commit()
         await self.db.refresh(kit)

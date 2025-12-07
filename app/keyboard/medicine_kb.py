@@ -182,6 +182,25 @@ def get_user_kits_keyboard(kits: list) -> InlineKeyboardMarkup:
             callback_data=f"delete_kit:{kit.id}"
         )
 
+    # Кнопка перехода в корзину и отмена
+    builder.button(text="🗑 Корзина аптечек", callback_data="show_trash_kits")
+    builder.button(text="❌ Отмена", callback_data="cancel")
+
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_trash_kits_keyboard(kits: list) -> InlineKeyboardMarkup:
+    """Клавиатура со списком удалённых аптечек (восстановление)"""
+    builder = InlineKeyboardBuilder()
+
+    for kit in kits:
+        builder.button(
+            text=f'Восстановить kit.name?',
+            callback_data=f"restore_kit:{kit.id}"
+        )
+
+    builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
     return builder.as_markup()
 
