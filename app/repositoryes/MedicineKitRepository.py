@@ -4,7 +4,7 @@ import logging
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 
-from app.database.models.medicine import MedicineKit
+from app.database.models.medicine import MedicineKit, MedicineItem
 from app.database.models.users import User
 from app.repositoryes.template import TemplateRepository
 
@@ -18,8 +18,10 @@ class MedicineKitRepository(TemplateRepository):
             self,
             name: Optional[str] = None,
             user_id: Optional[int] = None,
-            deleted: Optional[bool] = None
-    ) -> List[MedicineKit]:
+            deleted: Optional[bool] = None,
+            page: Optional[int] = None,
+            per_page: Optional[int] = None,
+        ) -> List[MedicineKit]:
         """Получить все аптечки с фильтрами"""
         query = select(MedicineKit)
         filters = []
@@ -31,18 +33,23 @@ class MedicineKitRepository(TemplateRepository):
             query = query.join(MedicineKit.users)
             filters.append(User.id == user_id)
         
-        if deleted is not None:
+        # By default exclude deleted kits unless explicitly requested
+        if deleted is None:
+            filters.append(MedicineKit.deleted == False)
+        else:
             filters.append(MedicineKit.deleted == deleted)
 
         if filters:
             query = query.where(and_(*filters))
         
-        
-
         query = query.options(
             selectinload(MedicineKit.users),
-            selectinload(MedicineKit.items)
+            selectinload(MedicineKit.items).selectinload(MedicineItem.medicine)
         )
+
+        # Apply pagination if requested
+        if page is not None and per_page is not None:
+            query = query.limit(per_page).offset(page * per_page)
 
         result = await self.db.execute(query)
         return result.scalars().all()
@@ -51,7 +58,7 @@ class MedicineKitRepository(TemplateRepository):
         """Получить аптечку по ID"""
         query = select(MedicineKit).where(MedicineKit.id == kit_id).options(
             selectinload(MedicineKit.users),
-            selectinload(MedicineKit.items)
+            selectinload(MedicineKit.items).selectinload(MedicineItem.medicine)
         )
         result = await self.db.execute(query)
         return result.scalar_one_or_none()

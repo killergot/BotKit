@@ -93,7 +93,6 @@ def get_similar_medicines_keyboard(medicines: list[Medicine]) -> InlineKeyboardM
     builder.adjust(1)
 
     return builder.as_markup()
-
 def get_category_search_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для выбора категории при поиске"""
     builder = InlineKeyboardBuilder()
@@ -257,5 +256,50 @@ def get_confirm_delete_item_keyboard(item_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Да, удалить", callback_data=f"confirm_delete_item:{item_id}")
     builder.button(text="❌ Отмена", callback_data=f"cancel_delete_item:{item_id}")
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def get_kit_items_keyboard(items: list, kit_id: int, page: int = 0, per_page: int = 5) -> InlineKeyboardMarkup:
+    """Клавиатура со списком экземпляров лекарств для конкретной аптечки с поддержкой пагинации"""
+    builder = InlineKeyboardBuilder()
+
+    start = page * per_page
+    end = start + per_page
+    page_items = items[start:end]
+
+    for item in page_items:
+        button_text = f"💊 {item.medicine.name}"
+        if item.medicine.dosage:
+            button_text += f" ({item.medicine.dosage})"
+        button_text += f" - {item.quantity} {item.unit}"
+
+        builder.button(
+            text=button_text,
+            callback_data=f"view_item:{item.id}"
+        )
+
+    # Навигация
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"kit_page:{kit_id}:{page - 1}"))
+    if end < len(items):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ▶️", callback_data=f"kit_page:{kit_id}:{page + 1}"))
+
+    if nav_buttons:
+        builder.row(*nav_buttons)
+
+    builder.row(InlineKeyboardButton(text="❌ Закрыть", callback_data="close"))
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def get_back_to_kit_keyboard(kit_id: int, page: int = 0) -> InlineKeyboardMarkup:
+    """Клавиатура для возврата к списку лекарств в аптечке"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="◀️ Назад к списку", callback_data=f"kit_page:{kit_id}:{page}")
+    builder.button(text="❌ Закрыть", callback_data="close")
     builder.adjust(1)
     return builder.as_markup()
