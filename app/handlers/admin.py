@@ -1,10 +1,13 @@
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, Filter
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.lexicon.lexicon_admin import LEXICON_COMMANDS_RU as ADMIN_COMMANDS_RU
+from app.lexicon.lexicon_admin import (
+    LEXICON_COMMANDS_RU as ADMIN_COMMANDS_RU,
+    LEXICON_RU as ADMIN_LEXICON_RU,
+)
 from app.lexicon.lexicon import LEXICON_RU
 from app.repositoryes.MedicineRepository import MedicineRepository
 from app.repositoryes.user_repository import UserRepository
@@ -45,6 +48,53 @@ async def _get_pending_medicines(db_session: AsyncSession):
             continue
         filtered.append(med)
     return filtered
+
+
+def _paginate(items: list, page: int, per_page: int = 5):
+    start = page * per_page
+    end = start + per_page
+    return items[start:end], start, end
+
+
+async def _render_pending_list_with_page(message, meds, page: int):
+    if not meds:
+        await message.edit_text(ADMIN_LEXICON_RU['no_pending_meds'])
+        return
+
+    page_items, start, end = _paginate(meds, page)
+
+    text = ADMIN_LEXICON_RU['pending_list_title']
+    builder = InlineKeyboardBuilder()
+    for med in page_items:
+        line = f"{med.id}. {med.name}"
+        if med.dosage:
+            line += f" ({med.dosage})"
+        line += f" — {med.medicine_type.value}, {med.category.value}\n"
+        text += line
+        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}")
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(text=ADMIN_LEXICON_RU['pagination_prev'], callback_data=f"admin_list_page:{page - 1}")
+        )
+    if end < len(meds):
+        nav_buttons.append(
+            InlineKeyboardButton(text=ADMIN_LEXICON_RU['pagination_next'], callback_data=f"admin_list_page:{page + 1}")
+        )
+    if nav_buttons:
+        builder.row(*nav_buttons)
+
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(1)
+
+    await message.edit_text(text, reply_markup=builder.as_markup())
+
+
+async def _render_pending_list(message, db_session: AsyncSession):
+    """Показывает список непроверенных/неверифицированных лекарств."""
+    meds = await _get_pending_medicines(db_session)
+    await _render_pending_list_with_page(message, meds, page=0)
 
 
 def _medicine_info_text(med) -> str:
@@ -94,13 +144,14 @@ async def cmd_check_not_verify(message: Message, db_session: AsyncSession):
     meds = await _get_pending_medicines(db_session)
 
     if not meds:
-        await message.answer("✅ Неверефицированных лекарств не найдено")
+        await message.answer(ADMIN_LEXICON_RU['no_pending_meds'])
         return
 
-    # build text and keyboard
-    text = "🔎 Неверефицированные лекарства:\n\n"
+    text = ADMIN_LEXICON_RU['pending_list_title']
+    page_items, start, end = _paginate(meds, page=0)
     builder = InlineKeyboardBuilder()
-    for med in meds:
+
+    for med in page_items:
         line = f"{med.id}. {med.name}"
         if med.dosage:
             line += f" ({med.dosage})"
@@ -108,10 +159,32 @@ async def cmd_check_not_verify(message: Message, db_session: AsyncSession):
         text += line
         builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}")
 
+    nav_buttons = []
+    if end < len(meds):
+        nav_buttons.append(
+            InlineKeyboardButton(text=ADMIN_LEXICON_RU['pagination_next'], callback_data=f"admin_list_page:{1}")
+        )
+    if nav_buttons:
+        builder.row(*nav_buttons)
+
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
 
     await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("admin_list_page:"))
+async def admin_list_page(callback: CallbackQuery, db_session: AsyncSession):
+    """Пагинация списка непроверенных лекарств."""
+    try:
+        page = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer(ADMIN_LEXICON_RU['pagination_error'], show_alert=True)
+        return
+
+    meds = await _get_pending_medicines(db_session)
+    await _render_pending_list_with_page(callback.message, meds, page)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith('admin_view_med:'))
@@ -121,25 +194,31 @@ async def admin_view_med(callback: CallbackQuery, db_session: AsyncSession):
     med_repo = MedicineRepository(db_session)
     med = await med_repo.get(med_id)
     if not med:
-        await callback.answer("Лекарство не найдено", show_alert=True)
+        await callback.answer(ADMIN_LEXICON_RU['med_not_found'], show_alert=True)
         return
 
     flags = Flags.from_int(getattr(med, "flags", 0))
     # Если уже обработано, вернёмся к списку
     if flags.has(Flags.VERIFIED) or flags.has(Flags.CHECKED):
-        await callback.answer("Это лекарство уже обработано", show_alert=True)
+        await callback.answer(ADMIN_LEXICON_RU['already_processed'], show_alert=True)
         await _render_pending_list(callback.message, db_session)
         return
 
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Верифицировать", callback_data=f"admin_verify_med:{med.id}")
     builder.button(text="❌ Отклонить", callback_data=f"admin_reject_med:{med.id}")
-    builder.button(text="◀️ Назад", callback_data="admin_back_to_list")
+    builder.button(text=ADMIN_LEXICON_RU['pagination_prev'], callback_data="admin_back_to_list")
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
 
     await callback.message.edit_text(
-        _medicine_info_text(med),
+        ADMIN_LEXICON_RU['med_info'].format(
+            name=med.name,
+            type=med.medicine_type.value,
+            category=med.category.value,
+            dosage=med.dosage or "-",
+            notes=med.notes or "-",
+        ),
         reply_markup=builder.as_markup()
     )
     await callback.answer()
@@ -158,7 +237,7 @@ async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
     med_repo = MedicineRepository(db_session)
     med = await med_repo.get(med_id)
     if not med:
-        await callback.answer("Лекарство не найдено", show_alert=True)
+        await callback.answer(ADMIN_LEXICON_RU['med_not_found'], show_alert=True)
         return
 
     current_flags = getattr(med, 'flags', 0) or 0
@@ -168,10 +247,10 @@ async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
 
     updated = await med_repo.update(med_id, flags=int(flags))
     if updated:
-        await callback.message.edit_text(f"✅ Лекарство '{med.name}' помечено как верифицированное")
-        await callback.answer("Верифицировано")
+        await callback.message.edit_text(ADMIN_LEXICON_RU['verify_success'].format(name=med.name))
+        await callback.answer(ADMIN_LEXICON_RU['verify_answer'])
     else:
-        await callback.answer("Ошибка при записи", show_alert=True)
+        await callback.answer(ADMIN_LEXICON_RU['reject_error'], show_alert=True)
 
 
 @router.callback_query(F.data.startswith('admin_reject_med:'))
@@ -180,7 +259,7 @@ async def admin_reject_med(callback: CallbackQuery, db_session: AsyncSession):
     med_repo = MedicineRepository(db_session)
     med = await med_repo.get(med_id)
     if not med:
-        await callback.answer("Лекарство не найдено", show_alert=True)
+        await callback.answer(ADMIN_LEXICON_RU['med_not_found'], show_alert=True)
         return
 
     current_flags = getattr(med, 'flags', 0) or 0
@@ -190,10 +269,10 @@ async def admin_reject_med(callback: CallbackQuery, db_session: AsyncSession):
 
     updated = await med_repo.update(med_id, flags=int(flags))
     if updated:
-        await callback.message.edit_text(f"❌ Лекарство '{med.name}' отмечено как отклонённое")
-        await callback.answer("Отклонено")
+        await callback.message.edit_text(ADMIN_LEXICON_RU['reject_success'].format(name=med.name))
+        await callback.answer(ADMIN_LEXICON_RU['reject_answer'])
     else:
-        await callback.answer("Ошибка при записи", show_alert=True)
+        await callback.answer(ADMIN_LEXICON_RU['reject_error'], show_alert=True)
 
 
 @router.callback_query(F.data == "cancel")
@@ -202,7 +281,7 @@ async def cancel_admin_flow(callback: CallbackQuery):
         await callback.message.delete()
     except Exception:
         await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.answer("Отменено")
+    await callback.answer(ADMIN_LEXICON_RU['cancelled'])
 
 
 # -------------------- Broadcast -------------------- #
