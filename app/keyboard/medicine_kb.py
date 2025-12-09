@@ -1,17 +1,19 @@
+import enum
+
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.database.models.medicine import MedicineType, MedicineCategory, Medicine, MedicineKit
 
 
-def get_medicine_type_keyboard() -> InlineKeyboardMarkup:
+def get_medicine_enum_keyboard(medicines: enum.Enum, calback_prefix: str) -> InlineKeyboardMarkup:
     """Клавиатура для выбора типа лекарства"""
     builder = InlineKeyboardBuilder()
 
-    for medicine_type in MedicineType:
+    for medicine_type in medicines:
         builder.button(
             text=medicine_type.value,
-            callback_data=f"medicine_type:{medicine_type.name}"
+            callback_data=f"{calback_prefix}:{medicine_type.name}"
         )
 
     builder.button(text="❌ Отмена", callback_data="cancel")
@@ -46,7 +48,7 @@ def get_skip_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_confirm_keyboard() -> InlineKeyboardMarkup:
+def get_confirm_upload_medical_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура подтверждения"""
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Сохранить", callback_data="confirm_save")

@@ -12,10 +12,9 @@ from rapidfuzz import fuzz, process
 
 from app.database.models.medicine import MedicineType, MedicineCategory, Medicine
 from app.keyboard.medicine_kb import (
-    get_medicine_type_keyboard,
-    get_medicine_category_keyboard,
+    get_medicine_enum_keyboard,
     get_skip_keyboard,
-    get_confirm_keyboard,
+    get_confirm_upload_medical_keyboard,
     get_medicine_kit_keyboard,
     get_similar_medicines_keyboard
 )
@@ -259,7 +258,7 @@ async def process_medicine_name(message: Message, state: FSMContext, db_session:
     await state.update_data(medicine_name=name)
     sent = await message.answer(
         LEXICON_RU['upload_choose_type'],
-        reply_markup=get_medicine_type_keyboard()
+        reply_markup=get_medicine_enum_keyboard(MedicineType, 'medicine_type')
     )
     await _store_last_bot_message(state, sent_message=sent)
     await state.set_state(MedicineUploadStates.choosing_type)
@@ -316,7 +315,7 @@ async def process_create_new_medicine(callback: CallbackQuery, state: FSMContext
 
     await callback.message.edit_text(
         LEXICON_RU['upload_choose_type'],
-        reply_markup=get_medicine_type_keyboard()
+        reply_markup=get_medicine_enum_keyboard(MedicineType, 'medicine_type')
     )
     await _store_last_bot_message(state, callback_message=callback)
     await state.set_state(MedicineUploadStates.choosing_type)
@@ -327,13 +326,13 @@ async def process_create_new_medicine(callback: CallbackQuery, state: FSMContext
 async def process_medicine_type(callback: CallbackQuery, state: FSMContext):
     """Выбор типа лекарства"""
     type_name = callback.data.split(":")[1]
-    medicine_type = MedicineType[type_name]
 
     await state.update_data(medicine_type=type_name)
 
     await callback.message.edit_text(
         LEXICON_RU['upload_choose_category'],
-        reply_markup=get_medicine_category_keyboard()
+        reply_markup=get_medicine_enum_keyboard(MedicineCategory,
+                                                'medicine_category')
     )
     await _store_last_bot_message(state, callback_message=callback)
     await state.set_state(MedicineUploadStates.choosing_category)
@@ -344,7 +343,6 @@ async def process_medicine_type(callback: CallbackQuery, state: FSMContext):
 async def process_medicine_category(callback: CallbackQuery, state: FSMContext):
     """Выбор категории лекарства"""
     category_name = callback.data.split(":")[1]
-    category = MedicineCategory[category_name]
 
     await state.update_data(medicine_category=category_name)
 
@@ -629,7 +627,7 @@ async def show_confirmation(message: Message, state: FSMContext):
         notes=data.get('item_notes') or '-'
     )
 
-    await message.answer(confirmation_text, reply_markup=get_confirm_keyboard())
+    await message.answer(confirmation_text, reply_markup=get_confirm_upload_medical_keyboard())
     await state.set_state(MedicineUploadStates.confirming)
 
 
