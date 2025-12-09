@@ -8,7 +8,7 @@ from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.keyboard.medicine_kb import (
-    get_user_items_keyboard,
+    get_medicine_items_keyboard,
     get_update_field_keyboard,
     get_cancel_keyboard
 )
@@ -53,7 +53,7 @@ async def cmd_update(message: Message, state: FSMContext, db_session: AsyncSessi
 
     await message.answer(
         LEXICON_RU['update_choose_item'],
-        reply_markup=get_user_items_keyboard(all_items)
+        reply_markup=get_medicine_items_keyboard(all_items, action="update", page=0, per_page=1000)
     )
     await state.set_state(UpdateItemStates.choosing_item)
 

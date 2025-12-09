@@ -8,7 +8,7 @@ from app.keyboard.medicine_kb import (
     get_confirm_delete_keyboard,
     get_trash_kits_keyboard,
     get_medicine_kit_keyboard,
-    get_kit_items_keyboard,
+    get_medicine_items_keyboard,
     get_back_to_kit_keyboard,
 )
 from app.lexicon.lexicon import LEXICON_RU
@@ -94,7 +94,16 @@ async def show_kit_items(callback: CallbackQuery, db_session: AsyncSession):
     # Пагинация: показываем по 5 элементов
     per_page = 5
 
-    await callback.message.edit_text(text, reply_markup=get_kit_items_keyboard(items, kit_id_val, page=0, per_page=per_page))
+    await callback.message.edit_text(
+        text, 
+        reply_markup=get_medicine_items_keyboard(
+            items, 
+            action="view", 
+            page=0, 
+            per_page=per_page, 
+            page_prefix=f"kit_page:{kit_id_val}"
+        )
+    )
     await callback.answer()
 
 
@@ -132,7 +141,16 @@ async def kit_page_callback(callback: CallbackQuery, db_session: AsyncSession):
     header = LEXICON_RU.get('kit_items_header', 'Аптечка "{name}" — лекарства ({count}):')
     text = header.format(name=kit_name, count=len(items))
 
-    await callback.message.edit_text(text, reply_markup=get_kit_items_keyboard(items, kit_id_val, page=page, per_page=per_page))
+    await callback.message.edit_text(
+        text, 
+        reply_markup=get_medicine_items_keyboard(
+            items, 
+            action="view", 
+            page=page, 
+            per_page=per_page, 
+            page_prefix=f"kit_page:{kit_id_val}"
+        )
+    )
     await callback.answer()
 
 
@@ -253,9 +271,30 @@ async def cancel_delete_kit(callback: CallbackQuery, db_session: AsyncSession):
 async def view_item_details(callback: CallbackQuery, db_session: AsyncSession):
     """Показать полную информацию о лекарстве"""
     try:
-        item_id = int(callback.data.split(":")[1])
-    except (ValueError, IndexError):
-        await callback.answer("Ошибка при обработке запроса", show_alert=True)
+        # Разбираем callback_data: view_item:{item_id}|back|{page_prefix}|{page}
+        # или просто view_item:{item_id} (старый формат для обратной совместимости)
+        data = callback.data
+        
+        # Проверяем новый формат с разделителем |
+        if "|back|" in data:
+            parts = data.split("|")
+            if len(parts) != 4:
+                raise ValueError(f"Invalid callback data format: expected 4 parts, got {len(parts)}")
+            item_id_str = parts[0]  # view_item:123
+            if not item_id_str.startswith("view_item:"):
+                raise ValueError(f"Invalid callback data format: expected 'view_item:', got '{item_id_str}'")
+            item_id = int(item_id_str.split(":")[1])
+            if parts[1] != "back":
+                raise ValueError(f"Invalid callback data format: expected 'back', got '{parts[1]}'")
+            back_prefix = parts[2]  # page_prefix может содержать двоеточия
+            back_page = int(parts[3])
+        else:
+            # Старый формат без информации о возврате
+            item_id = int(data.split(":")[1])
+            back_prefix = None
+            back_page = 0
+    except (ValueError, IndexError) as e:
+        await callback.answer(f"Ошибка при обработке запроса: {str(e)}", show_alert=True)
         return
 
     item_repo = MedicineItemRepository(db_session)
@@ -281,21 +320,6 @@ async def view_item_details(callback: CallbackQuery, db_session: AsyncSession):
     item_location = item.location or "Не указано"
     item_notes = item.notes or "Нет"
     kit_name = kit.name
-    kit_id_val = kit.id
-
-    # Определяем текущую страницу: находим позицию item в списке
-    kit_repo = MedicineKitRepository(db_session)
-    all_items = await kit_repo.get(kit_id_val)
-    if all_items and all_items.items:
-        items_list = list(all_items.items)
-        per_page = 5
-        try:
-            item_index = next(i for i, it in enumerate(items_list) if it.id == item_id)
-            page = item_index // per_page
-        except StopIteration:
-            page = 0
-    else:
-        page = 0
 
     # Формируем текст с полной информацией
     text = f"💊 *{medicine_name}*\n\n"
@@ -315,7 +339,7 @@ async def view_item_details(callback: CallbackQuery, db_session: AsyncSession):
 
     await callback.message.edit_text(
         text,
-        reply_markup=get_back_to_kit_keyboard(kit_id_val, page),
+        reply_markup=get_back_to_kit_keyboard(back_prefix, back_page),
         parse_mode="Markdown"
     )
     await callback.answer()

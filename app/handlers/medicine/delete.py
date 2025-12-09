@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.keyboard.medicine_kb import (
-    get_user_items_keyboard,
+    get_medicine_items_keyboard,
     get_confirm_delete_item_keyboard
 )
 from app.lexicon.lexicon import LEXICON_RU
@@ -48,7 +48,7 @@ async def cmd_delete_item(message: Message, state: FSMContext, db_session: Async
 
     await message.answer(
         LEXICON_RU['delete_choose_item'],
-        reply_markup=get_user_items_keyboard(all_items, action="delete")
+        reply_markup=get_medicine_items_keyboard(all_items, action="delete", page=0, per_page=1000)
     )
     await state.set_state(DeleteItemStates.choosing_item)
 

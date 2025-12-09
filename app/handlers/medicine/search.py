@@ -54,22 +54,15 @@ async def process_category_search(callback: CallbackQuery, db_session: AsyncSess
         await callback.answer()
         return
 
+
     # Формируем текст результатов
     result_text = LEXICON_RU['find_results'].format(count=len(all_items))
 
-    for item in all_items[:5]:  # Показываем первые 5
-        result_text += f"💊 {item.medicine.name}"
-        if item.medicine.dosage:
-            result_text += f" ({item.medicine.dosage})"
-        result_text += f"\n   {item.quantity} {item.unit}"
-        if item.expiry_date:
-            result_text += f" | Годен до: {item.expiry_date.strftime('%d.%m.%Y')}"
-        result_text += f"\n   📦 {item.medicine_kit.name}\n\n"
-
-    if len(all_items) > 5:
-        result_text += f"\n... и еще {len(all_items) - 5}"
-
-    await callback.message.edit_text(result_text)
+    # Используем унифицированную клавиатуру с префиксом для пагинации
+    await callback.message.edit_text(
+        result_text,
+        reply_markup=get_medicine_items_keyboard(all_items, action="view", page=0, page_prefix=f"search_page_category:{category_name}")
+    )
     await callback.answer()
 
 
@@ -77,6 +70,106 @@ async def process_category_search(callback: CallbackQuery, db_session: AsyncSess
 async def cancel_search(callback: CallbackQuery):
     """Отмена поиска"""
     await callback.message.delete()
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("search_page_category:"))
+async def search_page_category_callback(callback: CallbackQuery, db_session: AsyncSession):
+    """Обработка пагинации для поиска по категории"""
+    try:
+        parts = callback.data.split(":")
+        category_name = parts[1]
+        page = int(parts[2])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка при обработке запроса", show_alert=True)
+        return
+
+    category = MedicineCategory[category_name]
+    user_id = callback.from_user.id
+
+    # Получаем аптечки пользователя
+    kit_repo = MedicineKitRepository(db_session)
+    kits = await kit_repo.get_by_user(user_id)
+
+    if not kits:
+        await callback.answer("У вас нет аптечек", show_alert=True)
+        return
+
+    # Собираем все экземпляры нужной категории из всех аптечек пользователя
+    item_repo = MedicineItemRepository(db_session)
+    all_items = []
+
+    for kit in kits:
+        items = await item_repo.get_by_kit(kit.id)
+        # Фильтруем по категории
+        category_items = [item for item in items if item.medicine.category == category]
+        all_items.extend(category_items)
+
+    if not all_items:
+        await callback.message.edit_text(LEXICON_RU['find_no_results'])
+        await callback.answer()
+        return
+
+    # Формируем текст результатов
+    result_text = LEXICON_RU['find_results'].format(count=len(all_items))
+
+    # Используем унифицированную клавиатуру
+    await callback.message.edit_text(
+        result_text,
+        reply_markup=get_medicine_items_keyboard(all_items, action="view", page=page, page_prefix=f"search_page_category:{category_name}")
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("search_page_name:"))
+async def search_page_name_callback(callback: CallbackQuery, db_session: AsyncSession):
+    """Обработка пагинации для поиска по имени"""
+    try:
+        # Извлекаем query и page из callback_data
+        # Формат: search_page_name:{query}:{page}
+        # Разбираем с конца, так как query может содержать двоеточия
+        data = callback.data
+        # Убираем префикс "search_page_name:"
+        rest = data[len("search_page_name:"):]
+        # Последнее двоеточие разделяет query и page
+        last_colon = rest.rfind(":")
+        if last_colon == -1:
+            raise ValueError("Invalid callback data format")
+        query = rest[:last_colon]
+        page = int(rest[last_colon + 1:])
+    except (ValueError, IndexError):
+        await callback.answer("Ошибка при обработке запроса", show_alert=True)
+        return
+
+    user_id = callback.from_user.id
+
+    # Получаем аптечки пользователя
+    kit_repo = MedicineKitRepository(db_session)
+    kits = await kit_repo.get_by_user(user_id)
+
+    if not kits:
+        await callback.answer("У вас нет аптечек", show_alert=True)
+        return
+
+    # Ищем по всем аптечкам
+    item_repo = MedicineItemRepository(db_session)
+    all_items = []
+
+    for kit in kits:
+        items = await item_repo.search_in_kit(kit.id, query)
+        all_items.extend(items)
+
+    if not all_items:
+        await callback.message.edit_text(LEXICON_RU['search_no_results'].format(query=query))
+        await callback.answer()
+        return
+
+    # Показываем результаты с унифицированной клавиатурой
+    result_text = LEXICON_RU['search_results'].format(query=query)
+    await callback.message.edit_text(
+        result_text,
+        reply_markup=get_medicine_items_keyboard(all_items, action="view", page=page, page_prefix=f"search_page_name:{query}")
+    )
     await callback.answer()
 
 
@@ -105,21 +198,9 @@ async def search_by_name(message: Message, db_session: AsyncSession):
         await message.answer(LEXICON_RU['search_no_results'].format(query=query))
         return
 
-    # Показываем результаты
+    # Показываем результаты с унифицированной клавиатурой с префиксом для пагинации
     result_text = LEXICON_RU['search_results'].format(query=query)
-
-    for item in all_items:
-        item_info = LEXICON_RU['search_item_info'].format(
-            name=item.medicine.name,
-            type=item.medicine.medicine_type.value,
-            category=item.medicine.category.value,
-            dosage=item.medicine.dosage or '-',
-            quantity=item.quantity,
-            unit=item.unit,
-            expiry=item.expiry_date.strftime('%d.%m.%Y') if item.expiry_date else '-',
-            location=item.location or '-',
-            kit_name=item.medicine_kit.name
-        )
-        result_text += item_info + "\n"
-
-    await message.answer(result_text)
+    await message.answer(
+        result_text,
+        reply_markup=get_medicine_items_keyboard(all_items, action="view", page=0, page_prefix=f"search_page_name:{query}")
+    )
