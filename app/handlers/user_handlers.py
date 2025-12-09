@@ -60,3 +60,9 @@ async def command_help(message: Message):
         await message.answer(formatted, parse_mode=ParseMode.MARKDOWN)
     else:
         await send_format_help(message)
+
+
+@router.message(Command('manual'))
+async def command_manual(message: Message):
+    """Отдаем краткий мануал по основным сценариям работы с ботом."""
+    await message.answer(LEXICON_RU['/manual'])
