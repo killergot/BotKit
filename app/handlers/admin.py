@@ -9,7 +9,6 @@ from app.lexicon.lexicon import LEXICON_RU
 from app.repositoryes.MedicineRepository import MedicineRepository
 from app.repositoryes.user_repository import UserRepository
 from app.utils.flags import Flags
-from app.database.psql import config
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.keyboard.admin_kb import (
     get_users_keyboard,
@@ -34,6 +33,54 @@ router.message.filter(IsAdmin())
 router.callback_query.filter(IsAdmin())
 
 
+async def _get_pending_medicines(db_session: AsyncSession):
+    """Лекарства, которые ещё не проверены и не верифицированы."""
+    med_repo = MedicineRepository(db_session)
+    meds = await med_repo.get_all(verified=False)
+
+    filtered = []
+    for med in meds:
+        flags = Flags.from_int(getattr(med, "flags", 0))
+        if flags.has(Flags.VERIFIED) or flags.has(Flags.CHECKED):
+            continue
+        filtered.append(med)
+    return filtered
+
+
+def _medicine_info_text(med) -> str:
+    dosage = med.dosage or "-"
+    notes = med.notes or "-"
+    return (
+        f"💊 {med.name}\n"
+        f"🏷 {med.medicine_type.value} / {med.category.value}\n"
+        f"💉 Дозировка: {dosage}\n"
+        f"📝 Заметки: {notes}"
+    )
+
+
+async def _render_pending_list(message, db_session: AsyncSession):
+    """Показывает список непроверенных/неверифицированных лекарств."""
+    meds = await _get_pending_medicines(db_session)
+    if not meds:
+        await message.edit_text("✅ Неверефицированных лекарств не найдено")
+        return
+
+    text = "🔎 Неверефицированные лекарства:\n\n"
+    builder = InlineKeyboardBuilder()
+    for med in meds:
+        line = f"{med.id}. {med.name}"
+        if med.dosage:
+            line += f" ({med.dosage})"
+        line += f" — {med.medicine_type.value}, {med.category.value}\n"
+        text += line
+        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}")
+
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(1)
+
+    await message.edit_text(text, reply_markup=builder.as_markup())
+
+
 def _format_admin_help() -> str:
     text = "✔ *Admin commands:*"
     for cmd, desc in ADMIN_COMMANDS_RU.items():
@@ -44,8 +91,7 @@ def _format_admin_help() -> str:
 @router.message(Command('check_not_verify'))
 async def cmd_check_not_verify(message: Message, db_session: AsyncSession):
     """Admin command: list unverified medicines and allow verification."""
-    med_repo = MedicineRepository(db_session)
-    meds = await med_repo.get_all(verified=False)
+    meds = await _get_pending_medicines(db_session)
 
     if not meds:
         await message.answer("✅ Неверефицированных лекарств не найдено")
@@ -60,7 +106,7 @@ async def cmd_check_not_verify(message: Message, db_session: AsyncSession):
             line += f" ({med.dosage})"
         line += f" — {med.medicine_type.value}, {med.category.value}\n"
         text += line
-        builder.button(text=f"Верифицировать: {med.name}", callback_data=f"admin_verify_med:{med.id}")
+        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}")
 
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
@@ -68,17 +114,45 @@ async def cmd_check_not_verify(message: Message, db_session: AsyncSession):
     await message.answer(text, reply_markup=builder.as_markup())
 
 
-@router.callback_query(F.data.startswith('admin_verify_med:'))
-async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
-    try:
-        admin_id = int(config.tg_bot.ID_admin)
-    except Exception:
-        await callback.answer("Admin not configured", show_alert=True)
+@router.callback_query(F.data.startswith('admin_view_med:'))
+async def admin_view_med(callback: CallbackQuery, db_session: AsyncSession):
+    """Показать детали лекарства с кнопками действий."""
+    med_id = int(callback.data.split(':', 1)[1])
+    med_repo = MedicineRepository(db_session)
+    med = await med_repo.get(med_id)
+    if not med:
+        await callback.answer("Лекарство не найдено", show_alert=True)
         return
 
-    if callback.from_user.id != admin_id:
-        await callback.answer("Доступ запрещён", show_alert=True)
+    flags = Flags.from_int(getattr(med, "flags", 0))
+    # Если уже обработано, вернёмся к списку
+    if flags.has(Flags.VERIFIED) or flags.has(Flags.CHECKED):
+        await callback.answer("Это лекарство уже обработано", show_alert=True)
+        await _render_pending_list(callback.message, db_session)
         return
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Верифицировать", callback_data=f"admin_verify_med:{med.id}")
+    builder.button(text="❌ Отклонить", callback_data=f"admin_reject_med:{med.id}")
+    builder.button(text="◀️ Назад", callback_data="admin_back_to_list")
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        _medicine_info_text(med),
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_back_to_list")
+async def admin_back_to_list(callback: CallbackQuery, db_session: AsyncSession):
+    await _render_pending_list(callback.message, db_session)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith('admin_verify_med:'))
+async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
 
     med_id = int(callback.data.split(':', 1)[1])
     med_repo = MedicineRepository(db_session)
@@ -89,6 +163,7 @@ async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
 
     current_flags = getattr(med, 'flags', 0) or 0
     flags = Flags.from_int(current_flags)
+    flags.set(Flags.CHECKED)
     flags.set(Flags.VERIFIED)
 
     updated = await med_repo.update(med_id, flags=int(flags))
@@ -99,18 +174,40 @@ async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
         await callback.answer("Ошибка при записи", show_alert=True)
 
 
+@router.callback_query(F.data.startswith('admin_reject_med:'))
+async def admin_reject_med(callback: CallbackQuery, db_session: AsyncSession):
+    med_id = int(callback.data.split(':', 1)[1])
+    med_repo = MedicineRepository(db_session)
+    med = await med_repo.get(med_id)
+    if not med:
+        await callback.answer("Лекарство не найдено", show_alert=True)
+        return
+
+    current_flags = getattr(med, 'flags', 0) or 0
+    flags = Flags.from_int(current_flags)
+    flags.set(Flags.CHECKED)
+    flags.clear(Flags.VERIFIED)
+
+    updated = await med_repo.update(med_id, flags=int(flags))
+    if updated:
+        await callback.message.edit_text(f"❌ Лекарство '{med.name}' отмечено как отклонённое")
+        await callback.answer("Отклонено")
+    else:
+        await callback.answer("Ошибка при записи", show_alert=True)
+
+
+@router.callback_query(F.data == "cancel")
+async def cancel_admin_flow(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer("Отменено")
+
+
 # -------------------- Broadcast -------------------- #
 @router.message(Command('broadcast'))
 async def start_broadcast(message: Message, state: FSMContext, db_session: AsyncSession):
-    try:
-        admin_id = int(config.tg_bot.ID_admin)
-    except Exception:
-        await message.answer("Admin not configured")
-        return
-
-    if message.from_user.id != admin_id:
-        await message.answer("Доступ запрещён")
-        return
 
     user_repo = UserRepository(db_session)
     users = await user_repo.get_all()
@@ -140,18 +237,6 @@ async def cancel_broadcast_callback(callback: CallbackQuery, state: FSMContext):
 
 @router.message(BroadcastStates.waiting_message)
 async def process_broadcast(message: Message, bot: Bot, state: FSMContext, db_session: AsyncSession):
-    try:
-        admin_id = int(config.tg_bot.ID_admin)
-    except Exception:
-        await message.answer("Admin not configured")
-        await state.clear()
-        return
-
-    if message.from_user.id != admin_id:
-        await message.answer("Доступ запрещён")
-        await state.clear()
-        return
-
     user_repo = UserRepository(db_session)
     users = await user_repo.get_all()
     if not users:
@@ -175,16 +260,6 @@ async def process_broadcast(message: Message, bot: Bot, state: FSMContext, db_se
 # -------------------- Send private -------------------- #
 @router.message(Command('send_private'))
 async def start_private_message(message: Message, state: FSMContext, db_session: AsyncSession):
-    try:
-        admin_id = int(config.tg_bot.ID_admin)
-    except Exception:
-        await message.answer("Admin not configured")
-        return
-
-    if message.from_user.id != admin_id:
-        await message.answer("Доступ запрещён")
-        return
-
     user_repo = UserRepository(db_session)
     users = await user_repo.get_all()
     if not users:
