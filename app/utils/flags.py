@@ -9,6 +9,7 @@ class Flags:
     """
 
     VERIFIED = 1 << 0
+    CHECKED = 1 << 1
 
     def __init__(self, value: int = 0):
         self.value = int(value or 0)
