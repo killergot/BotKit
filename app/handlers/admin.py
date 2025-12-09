@@ -71,7 +71,7 @@ async def _render_pending_list_with_page(message, meds, page: int):
             line += f" ({med.dosage})"
         line += f" — {med.medicine_type.value}, {med.category.value}\n"
         text += line
-        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}")
+        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}:{page}")
 
     nav_buttons = []
     if page > 0:
@@ -123,7 +123,7 @@ async def _render_pending_list(message, db_session: AsyncSession):
             line += f" ({med.dosage})"
         line += f" — {med.medicine_type.value}, {med.category.value}\n"
         text += line
-        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}")
+        builder.button(text=f"{med.name}", callback_data=f"admin_view_med:{med.id}:0")
 
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
@@ -190,7 +190,9 @@ async def admin_list_page(callback: CallbackQuery, db_session: AsyncSession):
 @router.callback_query(F.data.startswith('admin_view_med:'))
 async def admin_view_med(callback: CallbackQuery, db_session: AsyncSession):
     """Показать детали лекарства с кнопками действий."""
-    med_id = int(callback.data.split(':', 1)[1])
+    parts = callback.data.split(':')
+    med_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
     med_repo = MedicineRepository(db_session)
     med = await med_repo.get(med_id)
     if not med:
@@ -201,13 +203,14 @@ async def admin_view_med(callback: CallbackQuery, db_session: AsyncSession):
     # Если уже обработано, вернёмся к списку
     if flags.has(Flags.VERIFIED) or flags.has(Flags.CHECKED):
         await callback.answer(ADMIN_LEXICON_RU['already_processed'], show_alert=True)
-        await _render_pending_list(callback.message, db_session)
+        meds = await _get_pending_medicines(db_session)
+        await _render_pending_list_with_page(callback.message, meds, page)
         return
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Верифицировать", callback_data=f"admin_verify_med:{med.id}")
-    builder.button(text="❌ Отклонить", callback_data=f"admin_reject_med:{med.id}")
-    builder.button(text=ADMIN_LEXICON_RU['pagination_prev'], callback_data="admin_back_to_list")
+    builder.button(text="✅ Верифицировать", callback_data=f"admin_verify_med:{med.id}:{page}")
+    builder.button(text="❌ Отклонить", callback_data=f"admin_reject_med:{med.id}:{page}")
+    builder.button(text=ADMIN_LEXICON_RU['pagination_prev'], callback_data=f"admin_back_to_list:{page}")
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(1)
 
@@ -224,16 +227,24 @@ async def admin_view_med(callback: CallbackQuery, db_session: AsyncSession):
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin_back_to_list")
+@router.callback_query(F.data.startswith("admin_back_to_list:"))
 async def admin_back_to_list(callback: CallbackQuery, db_session: AsyncSession):
-    await _render_pending_list(callback.message, db_session)
+    try:
+        page = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer(ADMIN_LEXICON_RU['pagination_error'], show_alert=True)
+        return
+    meds = await _get_pending_medicines(db_session)
+    await _render_pending_list_with_page(callback.message, meds, page)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith('admin_verify_med:'))
 async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
 
-    med_id = int(callback.data.split(':', 1)[1])
+    parts = callback.data.split(':')
+    med_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
     med_repo = MedicineRepository(db_session)
     med = await med_repo.get(med_id)
     if not med:
@@ -255,7 +266,9 @@ async def admin_verify_med(callback: CallbackQuery, db_session: AsyncSession):
 
 @router.callback_query(F.data.startswith('admin_reject_med:'))
 async def admin_reject_med(callback: CallbackQuery, db_session: AsyncSession):
-    med_id = int(callback.data.split(':', 1)[1])
+    parts = callback.data.split(':')
+    med_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
     med_repo = MedicineRepository(db_session)
     med = await med_repo.get(med_id)
     if not med:
