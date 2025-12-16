@@ -58,7 +58,7 @@ async def cmd_update(message: Message, state: FSMContext, db_session: AsyncSessi
     await state.set_state(UpdateItemStates.choosing_item)
 
 
-@router.callback_query(UpdateItemStates.choosing_item, F.data.startswith("update_item:"))
+@router.callback_query(F.data.startswith("update_item:"))
 async def process_item_selection(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession):
     """Выбор item для обновления"""
     item_id = int(callback.data.split(":")[1])

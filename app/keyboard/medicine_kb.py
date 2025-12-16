@@ -240,11 +240,34 @@ def get_confirm_delete_item_keyboard(item_id: int) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_back_to_kit_keyboard(back_prefix: str = None, back_page: int = 0) -> InlineKeyboardMarkup:
-    """Клавиатура для возврата к списку лекарств"""
+def get_back_to_kit_keyboard(
+    back_prefix: str = None,
+    back_page: int = 0,
+    item_id: int | None = None,
+) -> InlineKeyboardMarkup:
+    """Клавиатура для карточки лекарства: назад, обновить, удалить, закрыть"""
     builder = InlineKeyboardBuilder()
+
+    # Кнопка возврата к списку (если есть информация о пагинации)
     if back_prefix:
-        builder.button(text="◀️ Назад к списку", callback_data=f"{back_prefix}:{back_page}")
+        builder.button(
+            text="◀️ Назад к списку",
+            callback_data=f"{back_prefix}:{back_page}"
+        )
+
+    # Кнопки действий над текущим лекарством
+    if item_id is not None:
+        builder.button(
+            text="✏️ Обновить",
+            callback_data=f"update_item:{item_id}",
+        )
+        builder.button(
+            text="🗑 Удалить",
+            callback_data=f"delete_item:{item_id}",
+        )
+
+    # Кнопка закрытия
     builder.button(text=LEXICON_RU['close_btn'], callback_data="close")
+
     builder.adjust(1)
     return builder.as_markup()

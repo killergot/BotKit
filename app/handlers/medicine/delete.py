@@ -53,7 +53,7 @@ async def cmd_delete_item(message: Message, state: FSMContext, db_session: Async
     await state.set_state(DeleteItemStates.choosing_item)
 
 
-@router.callback_query(DeleteItemStates.choosing_item, F.data.startswith("delete_item:"))
+@router.callback_query(F.data.startswith("delete_item:"))
 async def confirm_delete_item(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession):
     """Подтверждение удаления item"""
     item_id = int(callback.data.split(":")[1])
@@ -82,7 +82,7 @@ async def confirm_delete_item(callback: CallbackQuery, state: FSMContext, db_ses
     await callback.answer()
 
 
-@router.callback_query(DeleteItemStates.choosing_item, F.data.startswith("confirm_delete_item:"))
+@router.callback_query(F.data.startswith("confirm_delete_item:"))
 async def process_delete_item(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession):
     """Удаление item"""
     item_id = int(callback.data.split(":")[1])
@@ -108,7 +108,7 @@ async def process_delete_item(callback: CallbackQuery, state: FSMContext, db_ses
         await callback.answer("❌ Ошибка при удалении", show_alert=True)
 
 
-@router.callback_query(DeleteItemStates.choosing_item, F.data.startswith("cancel_delete_item:"))
+@router.callback_query(F.data.startswith("cancel_delete_item:"))
 async def cancel_delete_item(callback: CallbackQuery, state: FSMContext):
     """Отмена удаления"""
     await callback.message.edit_text(LEXICON_RU['delete_cancelled'])

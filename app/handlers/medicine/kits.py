@@ -339,7 +339,7 @@ async def view_item_details(callback: CallbackQuery, db_session: AsyncSession):
 
     await callback.message.edit_text(
         text,
-        reply_markup=get_back_to_kit_keyboard(back_prefix, back_page),
+        reply_markup=get_back_to_kit_keyboard(back_prefix, back_page, item_id=item.id),
         parse_mode="Markdown"
     )
     await callback.answer()
