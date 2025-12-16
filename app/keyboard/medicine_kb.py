@@ -32,6 +32,14 @@ def get_skip_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_cancel_only_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура только с кнопкой отмены для текстовых шагов"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=LEXICON_RU['cancel_btn'], callback_data="cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def get_confirm_upload_medical_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура подтверждения"""
     builder = InlineKeyboardBuilder()

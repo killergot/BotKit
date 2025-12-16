@@ -16,7 +16,8 @@ from app.keyboard.medicine_kb import (
     get_skip_keyboard,
     get_confirm_upload_medical_keyboard,
     get_medicine_kit_keyboard,
-    get_similar_medicines_keyboard
+    get_similar_medicines_keyboard,
+    get_cancel_only_keyboard,
 )
 from app.lexicon.lexicon import LEXICON_RU
 from app.repositoryes.MedicineKitRepository import MedicineKitRepository
@@ -170,7 +171,10 @@ async def process_kit_name(
 
     # Сохраняем ID аптечки и переходим к вводу названия лекарства
     await state.update_data(medicine_kit_id=kit.id, kit_name=kit.name)
-    sent2 = await message.answer(LEXICON_RU['upload_enter_name'])
+    sent2 = await message.answer(
+        LEXICON_RU['upload_enter_name'],
+        reply_markup=get_cancel_only_keyboard(),
+    )
     await _store_last_bot_message(state, sent_message=sent2)
     await state.set_state(MedicineUploadStates.entering_name)
 
@@ -189,7 +193,10 @@ async def process_kit_selection(callback: CallbackQuery, state: FSMContext, db_s
 
     await state.update_data(medicine_kit_id=kit.id, kit_name=kit.name)
 
-    await callback.message.edit_text(LEXICON_RU['upload_enter_name'])
+    await callback.message.edit_text(
+        LEXICON_RU['upload_enter_name'],
+        reply_markup=get_cancel_only_keyboard(),
+    )
     await state.set_state(MedicineUploadStates.entering_name)
     await callback.answer()
 

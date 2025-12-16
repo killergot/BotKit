@@ -289,9 +289,12 @@ async def admin_reject_med(callback: CallbackQuery, db_session: AsyncSession):
 
 
 @router.callback_query(F.data == "cancel")
-async def cancel_admin_flow(callback: CallbackQuery):
+async def cancel_admin_flow(callback: CallbackQuery,
+                            state: FSMContext,):
     try:
         await callback.message.delete()
+        await state.clear()
+        await callback.answer()
     except Exception:
         await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer(ADMIN_LEXICON_RU['cancelled'])
