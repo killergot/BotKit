@@ -139,11 +139,18 @@ async def process_item_selection(callback: CallbackQuery, state: FSMContext, db_
 
 
 @router.callback_query(UpdateItemStates.choosing_field, F.data.startswith("update_field:"))
-async def process_field_selection(callback: CallbackQuery, state: FSMContext):
+async def process_field_selection(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession):
     """Выбор поля для обновления"""
     field = callback.data.split(":")[1]
 
     await state.update_data(update_field=field)
+
+    # Получаем текущий item, чтобы показать старое значение
+    data = await state.get_data()
+    item_id = data['item_id']
+
+    item_repo = MedicineItemRepository(db_session)
+    item = await item_repo.get(item_id)
 
     # Сообщения для каждого поля
     prompts = {
@@ -152,8 +159,23 @@ async def process_field_selection(callback: CallbackQuery, state: FSMContext):
         'notes': LEXICON_RU['update_enter_notes']
     }
 
+    base_prompt = prompts.get(field, "Введите новое значение:")
+
+    # Добавляем текущее значение к тексту подсказки
+    if field == 'quantity':
+        current = f"{item.quantity} {item.unit}"
+    elif field == 'location':
+        current = item.location or '-'
+    elif field == 'notes':
+        current = item.notes or '-'
+    else:
+        current = '-'
+
+    text = f"{base_prompt}\n\nСейчас: <b>{current}</b>"
+
     await callback.message.edit_text(
-        prompts.get(field, "Введите новое значение:"),
+        text,
+        parse_mode="HTML",
         reply_markup=get_cancel_keyboard()
     )
     await state.set_state(UpdateItemStates.entering_new_value)
@@ -171,18 +193,35 @@ async def process_new_value(message: Message, state: FSMContext, db_session: Asy
     item_repo = MedicineItemRepository(db_session)
 
     try:
+        # Получаем текущее значение для отображения "до/после"
+        item = await item_repo.get(item_id)
+
         # Валидация и обновление в зависимости от поля
         if field == 'quantity':
             quantity = Decimal(new_value.replace(',', '.'))
             if quantity < 0:
                 raise ValueError
             await item_repo.update(item_id, quantity=str(quantity))
+            old_value = f"{item.quantity} {item.unit}"
+            new_value_pretty = f"{quantity} {item.unit}"
         elif field == 'location':
+            old_value = item.location or '-'
             await item_repo.update(item_id, location=new_value)
+            new_value_pretty = new_value or '-'
         elif field == 'notes':
+            old_value = item.notes or '-'
             await item_repo.update(item_id, notes=new_value)
+            new_value_pretty = new_value or '-'
+        else:
+            old_value = "-"
+            new_value_pretty = new_value or "-"
 
-        await message.answer(LEXICON_RU['update_success'])
+        # Показываем старое и новое значение
+        await message.answer(
+            f"{LEXICON_RU['update_success']}\n\n"
+            f"🔄 Было: <b>{old_value}</b>\n"
+            f"✅ Стало: <b>{new_value_pretty}</b>"
+        )
         await state.clear()
 
     except (ValueError, decimal.InvalidOperation):
