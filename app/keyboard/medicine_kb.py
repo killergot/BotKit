@@ -135,18 +135,20 @@ def get_medicine_items_keyboard(items: list,
             callback_data=callback_data
         )
 
-    # Навигация (только если есть пагинация)
+    # Применяем adjust только к кнопкам элементов
+    builder.adjust(1)
+
+    # Навигация (только если есть пагинация) - размещаем в одном ряду
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"{page_prefix}:{page - 1}"))
     if end < len(items):
         nav_buttons.append(InlineKeyboardButton(text="Вперед ▶️", callback_data=f"{page_prefix}:{page + 1}"))
-
+    
     if nav_buttons:
         builder.row(*nav_buttons)
 
     builder.row(InlineKeyboardButton(text=LEXICON_RU['close_btn'], callback_data="close"))
-    builder.adjust(1)
 
     return builder.as_markup()
 
