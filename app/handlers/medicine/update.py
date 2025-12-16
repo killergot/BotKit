@@ -53,9 +53,58 @@ async def cmd_update(message: Message, state: FSMContext, db_session: AsyncSessi
 
     await message.answer(
         LEXICON_RU['update_choose_item'],
-        reply_markup=get_medicine_items_keyboard(all_items, action="update", page=0, per_page=1000)
+        reply_markup=get_medicine_items_keyboard(
+            all_items,
+            action="view",
+            page=0,
+            per_page=10,
+            page_prefix="update_page"
+        )
     )
-    await state.set_state(UpdateItemStates.choosing_item)
+
+
+@router.callback_query(F.data.startswith("update_page:"))
+async def update_page_callback(callback: CallbackQuery, db_session: AsyncSession):
+    """Пагинация списка лекарств для команды /update"""
+    try:
+        _, page_str = callback.data.split(":")
+        page = int(page_str)
+    except Exception:
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+
+    kit_repo = MedicineKitRepository(db_session)
+    kits = await kit_repo.get_by_user(user_id)
+
+    if not kits:
+        await callback.message.edit_text(LEXICON_RU['update_no_kits'])
+        await callback.answer()
+        return
+
+    item_repo = MedicineItemRepository(db_session)
+    all_items = []
+    for kit in kits:
+        items = await item_repo.get_by_kit(kit.id)
+        all_items.extend(items)
+
+    if not all_items:
+        await callback.message.edit_text(LEXICON_RU['update_no_items'])
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        LEXICON_RU['update_choose_item'],
+        reply_markup=get_medicine_items_keyboard(
+            all_items,
+            action="view",
+            page=page,
+            per_page=10,
+            page_prefix="update_page"
+        )
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("update_item:"))
