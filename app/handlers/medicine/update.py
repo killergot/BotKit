@@ -201,8 +201,8 @@ async def process_new_value(message: Message, state: FSMContext, db_session: Asy
             quantity = Decimal(new_value.replace(',', '.'))
             if quantity < 0:
                 raise ValueError
-            await item_repo.update(item_id, quantity=str(quantity))
             old_value = f"{item.quantity} {item.unit}"
+            await item_repo.update(item_id, quantity=str(quantity))
             new_value_pretty = f"{quantity} {item.unit}"
         elif field == 'location':
             old_value = item.location or '-'
@@ -220,7 +220,8 @@ async def process_new_value(message: Message, state: FSMContext, db_session: Asy
         await message.answer(
             f"{LEXICON_RU['update_success']}\n\n"
             f"🔄 Было: <b>{old_value}</b>\n"
-            f"✅ Стало: <b>{new_value_pretty}</b>"
+            f"✅ Стало: <b>{new_value_pretty}</b>",
+            parse_mode="HTML",
         )
         await state.clear()
 
