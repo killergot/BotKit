@@ -10,8 +10,10 @@ from app.core.config import Config, load_config
 from app.handlers import router
 from app.keyboard.menu import set_main_menu
 from app.middleware.db import DbSessionMiddleware
+from app.middleware.metrics import MetricsMiddleware
 from app.middleware.redis import RedisMiddleware
 from app.middleware.user import UserCheckMiddleware
+from app.utils.metrics import metrics_run
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +46,28 @@ async def main():
         logger.error(f"❌ Redis connection failed: {e}")
         sys.exit(1)
 
+    metrics_run()
+
     storage = RedisStorage(redis=redis)
 
     # Инициализируем бот и диспетчер
     bot = Bot(token=config.tg_bot.token)
     dp = Dispatcher(storage=storage)
+
+    # Подключение базы данных
     dp.message.middleware(DbSessionMiddleware())
     dp.message.middleware(UserCheckMiddleware())
-    dp.message.middleware(RedisMiddleware(redis))
+
     dp.callback_query.middleware(DbSessionMiddleware())
     dp.callback_query.middleware(UserCheckMiddleware())
+
+    # Подключение redis для storage и кэша
+    dp.message.middleware(RedisMiddleware(redis))
     dp.callback_query.middleware(RedisMiddleware(redis))
+
+    # Подключение прометея и графаны
+    dp.message.middleware(MetricsMiddleware())
+    dp.callback_query.middleware(MetricsMiddleware())
     # Регистриуем роутеры в диспетчере
     dp.include_router(router)
 

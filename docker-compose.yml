@@ -43,6 +43,8 @@ services:
       dockerfile: Dockerfile
     container_name: medicine_bot
     restart: unless-stopped
+    ports:
+      - "8000:8000"
     environment:
       MODE: prod
       BOT_TOKEN: ${BOT_TOKEN}
@@ -66,7 +68,46 @@ services:
       - bot_network
     volumes:
       - ./logs:/app/logs
-    command: [ "/app/scripts/run.sh" ]
+    command: [ "sh", "/app/scripts/run.sh" ]
+
+  prometheus:
+    image: prom/prometheus:v3.7.1
+    container_name: medicine_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=3d"
+    ports:
+      - "9090:9090"
+    networks:
+      - bot_network
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: medicine_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # (не обязательно, но можно явно указать путь)
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+
+    networks:
+      - bot_network
+    depends_on:
+      - prometheus
+
+
 
 networks:
   bot_network:
@@ -76,4 +117,8 @@ volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
