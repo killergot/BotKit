@@ -11,7 +11,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+      - "172.29.172.1:5432:5432"
     networks:
       - bot_network
     healthcheck:
@@ -28,7 +29,8 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+      - "172.29.172.1:6379:6379"
     networks:
       - bot_network
     healthcheck:
@@ -44,7 +46,8 @@ services:
     container_name: medicine_bot
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+      - "172.29.172.1:8000:8000"
     environment:
       MODE: prod
       BOT_TOKEN: ${BOT_TOKEN}
@@ -82,7 +85,8 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=3d"
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+      - "172.29.172.1:9090:9090"
     networks:
       - bot_network
 
@@ -91,7 +95,8 @@ services:
     container_name: medicine_grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
+      - "172.29.172.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -101,13 +106,10 @@ services:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
-
     networks:
       - bot_network
     depends_on:
       - prometheus
-
-
 
 networks:
   bot_network:
