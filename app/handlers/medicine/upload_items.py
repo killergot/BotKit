@@ -3,6 +3,9 @@ from datetime import datetime
 from decimal import Decimal, ROUND_DOWN
 from typing import Optional, List
 
+from logging import getLogger
+logger = getLogger(__name__)
+
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -22,7 +25,6 @@ from app.keyboard.medicine_kb import (
 from app.lexicon.lexicon import LEXICON_RU
 from app.repositoryes.MedicineKitRepository import MedicineKitRepository
 from app.repositoryes.MedicineRepository import MedicineRepository
-from app.utils.verified_medicines import is_medicine_verified
 from app.repositoryes.MedicineItemRepository import MedicineItemRepository
 from app.states.medicine import MedicineUploadStates
 from app.utils.flags import Flags
@@ -673,18 +675,12 @@ async def save_medicine(
         if data.get('using_existing_medicine') and data.get('selected_medicine_id'):
             medicine_id = data['selected_medicine_id']
         else:
-            # Создаем или получаем лекарство из справочника
-            # Решаем бизнес-логику в хэндлере: вычисляем флаги (например, VERIFIED) и
-            # передаём их в репозиторий при создании
-            is_verified = is_medicine_verified(data['medicine_name'])
-            flags_value = Flags.VERIFIED if is_verified else 0
-
             medicine = await medicine_repo.get_or_create(
                 name=data['medicine_name'],
                 medicine_type=medicine_type,
                 category=medicine_category,
                 dosage=data.get('medicine_dosage'),
-                flags=flags_value
+                flags=0
             )
 
             # Обновляем заметки если они есть
@@ -720,6 +716,7 @@ async def save_medicine(
     except Exception as e:
         await callback.message.edit_text(LEXICON_RU['upload_error'])
         await callback.answer("❌ Ошибка", show_alert=True)
+        logger.error(e)
         await state.clear()
 
 

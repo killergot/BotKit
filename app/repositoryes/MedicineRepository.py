@@ -5,7 +5,6 @@ from sqlalchemy import select, and_
 
 from app.database.models.medicine import Medicine, MedicineType, MedicineCategory
 from app.repositoryes.template import TemplateRepository
-from app.utils.verified_medicines import is_medicine_verified
 from app.utils.flags import Flags
 
 log = logging.getLogger(__name__)
@@ -75,12 +74,6 @@ class MedicineRepository(TemplateRepository):
             flags: Optional[int] = None
     ) -> Medicine:
         """Создать новое лекарство"""
-        # Если флаги переданы явно — используем их, иначе решаем в репозитории (на случай внешнего вызова)
-        if flags is None:
-            is_verified = is_medicine_verified(name)
-            flags_value = Flags.VERIFIED if is_verified else 0
-        else:
-            flags_value = int(flags)
 
         new_medicine = Medicine(
             name=name,
@@ -88,7 +81,7 @@ class MedicineRepository(TemplateRepository):
             category=category,
             dosage=dosage,
             notes=notes,
-            flags=flags_value
+            flags=int(flags) if flags else 0
         )
 
         self.db.add(new_medicine)
