@@ -29,3 +29,5 @@ class User(Base):
         secondary=user_medicine_kit_association,
         back_populates="users"
     )
+
+    reminders: Mapped[List["Reminder"]] = relationship(back_populates="user")

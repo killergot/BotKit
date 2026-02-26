@@ -14,6 +14,7 @@ from app.middleware.metrics import MetricsMiddleware
 from app.middleware.redis import RedisMiddleware
 from app.middleware.user import UserCheckMiddleware
 from app.utils.metrics import metrics_run
+from app.utils.scheduler import setup_scheduler, shutdown_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +74,16 @@ async def main():
 
     await set_main_menu(bot)
 
+    setup_scheduler(bot)
+
     try:
         logger.info("Starting polling...")
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except Exception as e:
         logger.error(f"Error during polling: {e}")
     finally:
+        # Останавливаем шедулер
+        await shutdown_scheduler()
         # Закрываем соединения
         await redis.close()
         logger.info("Bot stopped")

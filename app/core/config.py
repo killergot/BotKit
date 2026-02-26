@@ -32,6 +32,7 @@ class Config:
     database: DB
     tg_bot: TgBot
     redis: RedisConfig
+    scheduler_interval: int
     mode: str  # Добавим режим работы
 
 
@@ -69,5 +70,6 @@ def load_config(path: str | None = None) -> Config:
             port=int(env('REDIS_PORT', 6379)),
             password=env('REDIS_PASSWORD', None),  # None если не задан
             db=int(env('REDIS_DB', 0))
-        )
+        ),
+        scheduler_interval=int(env('SCHEDULER_INTERVAL', 300)),
     )
