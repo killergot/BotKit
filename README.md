@@ -108,4 +108,6 @@ docker-compose up --build
 - Просмотреть зависимости: `pip freeze` / `pip install -r requirements.txt`.
 - Применить миграции: `alembic upgrade head`.
 
+## Лицензия
 
+Исходный код проекта распространяется по [лицензии MIT](LICENSE).
