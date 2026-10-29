@@ -14,21 +14,35 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Deploy tested image with backup and rollback
-        uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
+        shell: bash
         env:
-          DEPLOY_SHA: ${{ github.sha }}
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          fingerprint: SHA256:2Jot+dO3LVQPOj3iMRv3bdlW3I1cIupmBJc0VpsHY6k
-          envs: DEPLOY_SHA
-          command_timeout: 18m
-          script: |
-            set -eu
-            cd projects/BotKit
-            git fetch origin main
-            git merge --ff-only "$DEPLOY_SHA"
-            test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
-            bash scripts/deploy.sh
+          DEPLOY_HOST: ${{ secrets.SSH_HOST }}
+          DEPLOY_USER: ${{ secrets.SSH_USERNAME }}
+          DEPLOY_KEY: ${{ secrets.SSH_PASSWORD }}
+          DEPLOY_PORT: ${{ secrets.SERVER_PORT || 22 }}
+        run: |
+          set -Eeuo pipefail
+          stage=configuration
+          trap 'echo "::error::BotKit deploy failed at stage: $stage"' ERR
+          key="$RUNNER_TEMP/botkit-ssh-key"
+          hosts="$RUNNER_TEMP/botkit-known-hosts"
+          umask 077
+          printf '%s\n' "$DEPLOY_KEY" | tr -d '\r' > "$key"
+          ssh-keygen -y -f "$key" > /dev/null
+          stage=host-key-verification
+          ssh-keyscan -T 15 -t ed25519 -p "$DEPLOY_PORT" "$DEPLOY_HOST" > "$hosts"
+          test "$(ssh-keygen -lf "$hosts" -E sha256 | awk '{print $2}')" = 'SHA256:2Jot+dO3LVQPOj3iMRv3bdlW3I1cIupmBJc0VpsHY6k'
+          stage=ssh-deployment
+          ssh -i "$key" -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o HostKeyAlgorithms=ssh-ed25519 -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hosts" "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$GITHUB_SHA" <<'REMOTE'
+          set -Eeuo pipefail
+          revision=$1
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          cd projects/BotKit
+          git fetch origin main
+          git merge --ff-only "$revision"
+          test "$(git rev-parse HEAD)" = "$revision"
+          bash scripts/deploy.sh
+          REMOTE

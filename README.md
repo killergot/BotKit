@@ -49,7 +49,8 @@ Production deploy выполняется от root командой `bash script
 
 Push в main запускает тот же deploy через GitHub Actions. Установленный secret
 `SSH_PASSWORD` содержит SSH **ключ**, его существующее имя сохранено.
-При смене SSH host key обновите закреплённый fingerprint в workflow.
+CI использует штатный OpenSSH и проверяет закреплённый ED25519 fingerprint.
+При смене SSH host key обновите fingerprint в workflow.
 Не запускайте старый `make down` перед deploy. Удаление volumes через `make clean`
 отключено. Для ручной миграции: `make migrate`; для тестов: `make test`.
 
