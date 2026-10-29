@@ -42,7 +42,7 @@ shell:
 
 # Вход в PostgreSQL
 psql:
-	docker compose exec postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+	docker compose exec postgres sh -c 'exec psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
 
 # Checked deployment with backup, separate migrations and rollback.
 deploy:
