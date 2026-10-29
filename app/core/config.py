@@ -25,6 +25,7 @@ class RedisConfig:
     port: int
     password: str | None
     db: int
+    username: str | None = None
 
 
 @dataclass
@@ -38,7 +39,10 @@ class Config:
 
 def load_config(path: str | None = None) -> Config:
     env = Env()
-    env.read_env(path)
+    # Production configuration comes exclusively from the container environment.
+    import os
+    if path is not None or os.environ.get('MODE', 'dev') == 'dev':
+        env.read_env(path)
 
     mode = env('MODE', 'dev')  # По умолчанию dev
     logger.warning(f"MODE: {mode}")
@@ -51,7 +55,7 @@ def load_config(path: str | None = None) -> Config:
     else:
         db_host = env('DB_HOST_PROD')
         redis_host = env('REDIS_HOST_PROD', 'redis')
-        db_pass = env('DB_PASS_PROD', '<PASSWORD>')
+        db_pass = env('DB_PASS')
 
     return Config(
         mode=mode,
@@ -69,7 +73,8 @@ def load_config(path: str | None = None) -> Config:
             host=redis_host,
             port=int(env('REDIS_PORT', 6379)),
             password=env('REDIS_PASSWORD', None),  # None если не задан
-            db=int(env('REDIS_DB', 0))
+            db=int(env('REDIS_DB', 0)),
+            username=env('REDIS_USER', None),
         ),
         scheduler_interval=int(env('SCHEDULER_INTERVAL', 300)),
     )

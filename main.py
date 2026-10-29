@@ -31,6 +31,7 @@ async def main():
     logger.info(f"Redis host: {config.redis.host}")
 
     redis = Redis(
+        username=config.redis.username,
         host=config.redis.host,
         port=config.redis.port,
         password=config.redis.password if config.mode == 'prod' else None,

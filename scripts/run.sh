@@ -1,14 +1,6 @@
 #!/bin/sh
-set -e
+set -eu
 
-# Ждём, пока PostgreSQL станет доступен
-until pg_isready -h "$DB_HOST_PROD" -p 5432 -U "$DB_USER"; do
-  echo "Waiting for Postgres..."
-  sleep 2
-done
-
-# Выполняем миграции
-python -m alembic upgrade head
-
-# Запускаем приложение
-python main.py
+# Migrations run separately during deployment with a different database role.
+python /app/scripts/check_runtime.py --wait
+exec python -u /app/main.py

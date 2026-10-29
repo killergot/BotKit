@@ -1,24 +1,34 @@
 name: Deploy to Server
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: botkit-production
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
-      - name: Deploy to server
-        uses: appleboy/ssh-action@master
+      - name: Deploy tested image with backup and rollback
+        uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           key: ${{ secrets.SSH_PASSWORD }}
           port: ${{ secrets.SERVER_PORT || 22 }}
+          fingerprint: SHA256:2Jot+dO3LVQPOj3iMRv3bdlW3I1cIupmBJc0VpsHY6k
+          envs: DEPLOY_SHA
+          command_timeout: 18m
           script: |
+            set -eu
             cd projects/BotKit
-            git pull origin main
-            make down
-            make up-build
+            git fetch origin main
+            git merge --ff-only "$DEPLOY_SHA"
+            test "$(git rev-parse HEAD)" = "$DEPLOY_SHA"
+            bash scripts/deploy.sh

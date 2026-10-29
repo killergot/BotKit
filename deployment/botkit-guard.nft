@@ -1,0 +1,27 @@
+# Only this application's table is replaced. Docker/VPN/game rules are preserved.
+add table inet botkit_guard
+flush table inet botkit_guard
+
+table inet botkit_guard {
+    chain input {
+        type filter hook input priority -15; policy accept;
+        iifname { "br-bk-data", "br-bk-metrics", "br-bk-egress", "br-bk-mon" } ct state established,related accept
+        iifname { "br-bk-data", "br-bk-metrics", "br-bk-egress", "br-bk-mon" } counter reject
+    }
+    chain forward {
+        type filter hook forward priority -15; policy accept;
+        ct state established,related accept
+        # Backend connections originate only from the bot or one-shot migrations.
+        iifname "br-bk-data" oifname "br-bk-data" ip saddr { 172.30.30.10, 172.30.30.40 } ip daddr 172.30.30.20 tcp dport 5432 accept
+        iifname "br-bk-data" oifname "br-bk-data" ip saddr 172.30.30.10 ip daddr 172.30.30.30 tcp dport 6379 accept
+        iifname "br-bk-metrics" oifname "br-bk-metrics" ip saddr 172.30.31.20 ip daddr 172.30.31.10 tcp dport 8000 accept
+        iifname "br-bk-mon" oifname "br-bk-mon" ip saddr 172.30.33.30 ip daddr 172.30.33.20 tcp dport 9090 accept
+        # The bot needs HTTPS/DNS, not access to private networks or cloud metadata.
+        iifname "br-bk-egress" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } counter reject
+        iifname "br-bk-egress" tcp dport { 443, 53 } accept
+        iifname "br-bk-egress" udp dport 53 accept
+        iifname { "br-bk-data", "br-bk-metrics", "br-bk-egress", "br-bk-mon" } counter reject
+        # No direct access from VPN, game or future containers to private addresses.
+        oifname { "br-bk-data", "br-bk-metrics", "br-bk-egress", "br-bk-mon" } counter reject
+    }
+}

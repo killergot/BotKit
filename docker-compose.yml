@@ -1,126 +1,213 @@
+name: botkit
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restrictions: &restrictions
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  read_only: true
+  logging: *logging
+
+x-app-env: &app-env
+  MODE: prod
+  DB_NAME: ${DB_NAME:?DB_NAME is required}
+  DB_HOST_PROD: postgres
+  REDIS_HOST_PROD: redis
+  REDIS_PORT: "6379"
+  REDIS_DB: ${REDIS_DB:-0}
+  REDIS_USER: botkit
+  REDIS_PASSWORD: ${REDIS_APP_PASSWORD:?REDIS_APP_PASSWORD is required}
+
 services:
   postgres:
-    image: postgres:16-alpine
+    <<: *restrictions
+    # Keep the existing PG major, image and data layout during privilege changes.
+    image: ${POSTGRES_IMAGE:-postgres@sha256:a5074487380d4e686036ce61ed6f2d363939ae9a0c40123d1a9e3bb3a5f344b4}
     container_name: medicine_postgres
+    user: "70:70"
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASS_PROD}
+      POSTGRES_DB: ${DB_NAME:?}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD is required}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"
-      - "172.29.172.1:5432:5432"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=70,gid=70,mode=1777
+      - /var/run/postgresql:rw,noexec,nosuid,size=16m,uid=70,gid=70,mode=3775
+    ports: ["127.0.0.1:5432:5432"]
     networks:
-      - bot_network
+      backend:
+        ipv4_address: 172.30.30.20
+    mem_limit: 512m
+    pids_limit: 128
+    cpus: 0.75
+    shm_size: 128m
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      test: [CMD-SHELL, 'pg_isready -U postgres -d "$$POSTGRES_DB"']
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 6
 
   redis:
-    image: redis:7-alpine
+    <<: *restrictions
+    image: ${REDIS_IMAGE:-redis@sha256:ee64a64eaab618d88051c3ade8f6352d11531fcf79d9a4818b9b183d8c1d18ba}
     container_name: medicine_redis
+    user: "999:1000"
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    command: [redis-server, --appendonly, "yes", --aclfile, /etc/redis/users.acl,
+              --maxmemory, 96mb, --maxmemory-policy, noeviction]
+    environment:
+      REDISCLI_AUTH: ${REDIS_ADMIN_PASSWORD:?REDIS_ADMIN_PASSWORD is required}
     volumes:
       - redis_data:/data
-    ports:
-      - "127.0.0.1:6379:6379"
-      - "172.29.172.1:6379:6379"
+      - ${BOTKIT_SECRETS_DIR:-/etc/botkit}/redis-users.acl:/etc/redis/users.acl:ro
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m,mode=1777"]
+    ports: ["127.0.0.1:6379:6379"]
     networks:
-      - bot_network
+      backend:
+        ipv4_address: 172.30.30.30
+    mem_limit: 128m
+    pids_limit: 64
+    cpus: 0.25
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: [CMD, redis-cli, --user, admin, ping]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 6
 
   bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *restrictions
+    image: botkit-bot:${BOTKIT_IMAGE_TAG:-local}
+    build: .
     container_name: medicine_bot
+    user: "10001:10001"
+    init: true
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8000:8000"
-      - "172.29.172.1:8000:8000"
     environment:
-      MODE: prod
-      BOT_TOKEN: ${BOT_TOKEN}
-      ID_ADMIN: ${ID_ADMIN}
-
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASS: ${DB_PASS_PROD}
-      DB_HOST_PROD: postgres
-
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      REDIS_DB: ${REDIS_DB}
-      REDIS_HOST_PROD: redis
+      <<: *app-env
+      BOT_TOKEN: ${BOT_TOKEN:?BOT_TOKEN is required}
+      ID_ADMIN: ${ID_ADMIN:?ID_ADMIN is required}
+      DB_USER: botkit_app
+      DB_PASS: ${BOTKIT_DB_PASSWORD:?BOTKIT_DB_PASSWORD is required}
+      SCHEDULER_INTERVAL: ${SCHEDULER_INTERVAL:-300}
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
     networks:
-      - bot_network
-    volumes:
-      - ./logs:/app/logs
-    command: [ "sh", "/app/scripts/run.sh" ]
+      backend:
+        ipv4_address: 172.30.30.10
+      metrics:
+        ipv4_address: 172.30.31.10
+      egress:
+        ipv4_address: 172.30.32.10
+        gw_priority: 1
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    mem_limit: 384m
+    pids_limit: 128
+    cpus: 0.75
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, /app/scripts/check_runtime.py]
+      interval: 30s
+      timeout: 20s
+      start_period: 90s
+      retries: 3
+
+  migrate:
+    <<: *restrictions
+    profiles: [tools]
+    image: botkit-bot:${BOTKIT_IMAGE_TAG:-local}
+    user: "10001:10001"
+    environment:
+      <<: *app-env
+      BOT_TOKEN: "0:offline-migration"
+      ID_ADMIN: "0"
+      DB_USER: botkit_migrator
+      DB_PASS: ${BOTKIT_MIGRATION_PASSWORD:?BOTKIT_MIGRATION_PASSWORD is required}
+    command: [python, -m, alembic, upgrade, head]
+    networks:
+      backend:
+        ipv4_address: 172.30.30.40
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    mem_limit: 256m
+    pids_limit: 64
+    cpus: 0.5
 
   prometheus:
+    <<: *restrictions
     image: prom/prometheus:v3.7.1
     container_name: medicine_prometheus
+    user: "65534:65534"
     restart: unless-stopped
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=3d"
-    ports:
-      - "127.0.0.1:9090:9090"
-      - "172.29.172.1:9090:9090"
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m,mode=1777"]
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus,
+              --storage.tsdb.retention.time=3d, --storage.tsdb.retention.size=256MB]
+    ports: ["127.0.0.1:9090:9090"]
     networks:
-      - bot_network
+      metrics:
+        ipv4_address: 172.30.31.20
+      monitoring:
+        ipv4_address: 172.30.33.20
+    mem_limit: 192m
+    pids_limit: 64
+    cpus: 0.25
 
   grafana:
-    image: grafana/grafana:12.1.1
+    <<: *restrictions
+    image: ${GRAFANA_IMAGE:?GRAFANA_IMAGE is required}
     container_name: medicine_grafana
+    user: "472:0"
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3000:3000"
-      - "172.29.172.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      # (не обязательно, но можно явно указать путь)
-      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_CHECK_FOR_UPDATES: "false"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,mode=1777"]
+    ports: ["127.0.0.1:3000:3000"]
     networks:
-      - bot_network
-    depends_on:
-      - prometheus
+      monitoring:
+        ipv4_address: 172.30.33.30
+    mem_limit: 384m
+    pids_limit: 128
+    cpus: 0.5
+    depends_on: [prometheus]
 
 networks:
-  bot_network:
-    driver: bridge
+  backend:
+    internal: true
+    driver_opts: {com.docker.network.bridge.name: br-bk-data}
+    ipam: {config: [{subnet: 172.30.30.0/24}]}
+  metrics:
+    internal: true
+    driver_opts: {com.docker.network.bridge.name: br-bk-metrics}
+    ipam: {config: [{subnet: 172.30.31.0/24}]}
+  egress:
+    driver_opts: {com.docker.network.bridge.name: br-bk-egress}
+    ipam: {config: [{subnet: 172.30.32.0/24}]}
+  monitoring:
+    internal: true
+    driver_opts: {com.docker.network.bridge.name: br-bk-mon}
+    ipam: {config: [{subnet: 172.30.33.0/24}]}
 
+# Existing volumes must be present; never create empty replacements silently.
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-  prometheus_data:
-    driver: local
-  grafana_data:
-    driver: local
+  postgres_data: {external: true, name: botkit_postgres_data}
+  redis_data: {external: true, name: botkit_redis_data}
+  prometheus_data: {external: true, name: botkit_prometheus_data}
+  grafana_data: {external: true, name: botkit_grafana_data}

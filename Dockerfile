@@ -1,33 +1,22 @@
-FROM python:3.13.3-slim
+FROM python:3.13-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    postgresql-client \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# The requirements export includes hashes from uv.lock.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt \
+    && groupadd --gid 10001 botkit \
+    && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent botkit
 
-# Устанавливаем uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Allowlist: runtime secrets and backups never enter image layers.
+COPY app ./app
+COPY migrations ./migrations
+COPY main.py alembic.ini ./
+COPY scripts/run.sh scripts/check_runtime.py ./scripts/
+RUN chmod 0555 /app/scripts/run.sh
 
-# Явно добавляем uv в PATH
-ENV PATH="/root/.local/bin:${PATH}"
-
-# Проверяем, что uv доступен
-RUN which uv && uv --version
-
-COPY requirements.txt .
-
-# Устанавливаем зависимости через uv
-RUN uv pip install --system --no-cache -r requirements.txt
-
-# Копируем весь проект
-COPY . .
-
-# Исправляем окончания строк в скрипте (CRLF -> LF) и даём права на выполнение
-RUN sed -i 's/\r$//' /app/scripts/run.sh && \
-    chmod +x /app/scripts/run.sh
-
-# Обновляем .env если существует
-RUN if [ -f /app/.env ]; then sed -i 's/^MODE=.*/MODE=prod/' /app/.env; fi
+USER 10001:10001
+CMD ["/app/scripts/run.sh"]

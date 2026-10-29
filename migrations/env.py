@@ -3,6 +3,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.engine import URL
 import asyncio
 import os
 from app.database import Base
@@ -28,12 +29,11 @@ target_metadata = None
 # ... etc.
 def get_db_url():
     db_config = load_config()
-    DATABASE_URL = (f'postgresql+asyncpg://{db_config.database.user}'
-                    f':{db_config.database.password}@'
-                    f'{db_config.database.host}/'
-                    f'{db_config.database.name}')
-
-    return DATABASE_URL
+    return URL.create(
+        'postgresql+asyncpg', username=db_config.database.user,
+        password=db_config.database.password, host=db_config.database.host,
+        port=5432, database=db_config.database.name,
+    )
 
 
 def do_run_migrations(connection):

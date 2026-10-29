@@ -3,6 +3,15 @@ test/
 .idea/
 __pycache__/
 .env
+.env.*
+!.env.example
+*.sql
+!scripts/database-roles.sql
+*.dump
+*.rdb
+*.aof
+backups/
+secrets/
 .mypy_cache/
 .vscode/
 test.py
