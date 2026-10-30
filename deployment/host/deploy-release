@@ -1,0 +1,41 @@
+#!/bin/bash
+set -Eeuo pipefail
+umask 077
+state=/var/lib/botkit
+repo=${BOTKIT_REPO:?}
+revision=${BOTKIT_IMAGE_TAG:?}
+[[ $revision =~ ^[0-9a-f]{40}$ && $repo == "/opt/botkit/releases/$revision" ]]
+cd "$repo"
+compose=(docker compose --project-name botkit --project-directory "$repo" --env-file /etc/botkit/compose.env -f /etc/botkit/compose.yml)
+"${compose[@]}" config --quiet
+"${compose[@]}" build bot > "$state/build-$revision.log" 2>&1 || { echo "Image build failed; details in root-only server log" >&2; exit 1; }
+docker run --rm --network none --user 10001:10001 --read-only --cap-drop ALL --security-opt no-new-privileges --memory 256m --pids-limit 64 --cpus 0.5 \
+ --mount "type=bind,source=$repo/tests,target=/app/tests,readonly" \
+ "botkit-bot:$revision" python -m unittest discover -s tests -v
+[ -f "$state/last-good.json" ] || { echo 'Initial verified deployment is required' >&2; exit 1; }
+cp "$state/last-good.json" "$state/rollback.json"
+rollback() {
+ status=$?
+ trap - ERR
+ echo 'Deployment failed; restarting previous containers. Database changes are not reverted.' >&2
+ if ! docker compose --project-name botkit -f "$state/rollback.json" up -d --remove-orphans; then
+  printf 'rollback-needs-attention %s\n' "$revision" > "$state/deploy-status"
+  echo 'Previous containers could not be restarted; administrator action required' >&2
+  exit "$status"
+ fi
+ printf 'failed %s\n' "$revision" > "$state/deploy-status"
+ exit "$status"
+}
+trap rollback ERR
+backup=$(python3 /usr/local/lib/botkit/backup.py --leave-stopped)
+printf '%s\n' "$backup" > "$state/latest-backup"
+"${compose[@]}" up -d --wait --wait-timeout 120 postgres redis grafana prometheus
+"${compose[@]}" --profile tools run --rm --no-deps migrate < /dev/null
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 bot
+"${compose[@]}" config --format json > "$state/next-good.json"
+python3 /usr/local/lib/botkit/pin-images.py "$state/next-good.json"
+mv "$state/next-good.json" "$state/last-good.json"
+ln -sfn "$repo" /opt/botkit/current
+printf 'healthy %s\n' "$revision" > "$state/deploy-status"
+trap - ERR
+printf 'BotKit deployed: %s; backup: %s\n' "$revision" "$backup"

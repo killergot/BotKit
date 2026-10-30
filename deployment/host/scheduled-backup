@@ -1,0 +1,18 @@
+#!/bin/bash
+set -Eeuo pipefail
+umask 077
+exec 9>/var/lib/botkit/artifact-deploy.lock
+flock -w 600 9
+export BOTKIT_REPO=/opt/botkit/current
+python3 /usr/local/lib/botkit/backup.py > /var/lib/botkit/latest-backup.next
+mv /var/lib/botkit/latest-backup.next /var/lib/botkit/latest-backup
+python3 - <<'PY'
+import datetime, re, shutil
+from pathlib import Path
+root=Path('/var/backups/botkit')
+latest=Path('/var/lib/botkit/latest-backup').read_text().strip()
+cutoff=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=30)
+entries=sorted([p for p in root.iterdir() if p.is_dir() and not p.is_symlink() and re.fullmatch(r'\d{8}T\d{6}\.\d+Z',p.name)],reverse=True)
+for p in entries[14:]:
+ if str(p)!=latest and (p/'complete').is_file() and datetime.datetime.fromtimestamp(p.stat().st_mtime,datetime.timezone.utc)<cutoff: shutil.rmtree(p)
+PY

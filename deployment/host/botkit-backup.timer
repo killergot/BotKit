@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily BotKit backup
+[Timer]
+OnCalendar=*-*-* 00:15:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+[Install]
+WantedBy=timers.target

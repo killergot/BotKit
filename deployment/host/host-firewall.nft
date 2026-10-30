@@ -1,0 +1,13 @@
+add table inet botkit_host
+flush table inet botkit_host
+table inet botkit_host {
+ chain input {
+  type filter hook input priority 0; policy drop;
+  ct state invalid drop
+  ct state established,related accept
+  iifname "lo" accept
+  ip protocol icmp accept
+  meta l4proto ipv6-icmp accept
+  tcp dport 22 ct state new accept
+ }
+}

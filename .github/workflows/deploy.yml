@@ -11,38 +11,30 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Deploy tested image with backup and rollback
+      - name: Check out the deployment revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Deploy through the restricted SSH account
         shell: bash
         env:
-          DEPLOY_HOST: ${{ secrets.SSH_HOST }}
-          DEPLOY_USER: ${{ secrets.SSH_USERNAME }}
-          DEPLOY_KEY: ${{ secrets.SSH_PASSWORD }}
-          DEPLOY_PORT: ${{ secrets.SERVER_PORT || 22 }}
+          DEPLOY_KEY: ${{ secrets.BOTKIT_DEPLOY_KEY }}
         run: |
           set -Eeuo pipefail
-          stage=configuration
-          trap 'echo "::error::BotKit deploy failed at stage: $stage"' ERR
+          test -n "$DEPLOY_KEY" || { echo '::error::Set BOTKIT_DEPLOY_KEY for the new server'; exit 1; }
           key="$RUNNER_TEMP/botkit-ssh-key"
           hosts="$RUNNER_TEMP/botkit-known-hosts"
           umask 077
+          trap 'rm -f "$key" "$hosts"' EXIT
           printf '%s\n' "$DEPLOY_KEY" | tr -d '\r' > "$key"
           ssh-keygen -y -f "$key" > /dev/null
-          stage=host-key-verification
-          ssh-keyscan -T 15 -t ed25519 -p "$DEPLOY_PORT" "$DEPLOY_HOST" > "$hosts"
-          test "$(ssh-keygen -lf "$hosts" -E sha256 | awk '{print $2}')" = 'SHA256:2Jot+dO3LVQPOj3iMRv3bdlW3I1cIupmBJc0VpsHY6k'
-          stage=ssh-deployment
-          ssh -i "$key" -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes \
-            -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-            -o HostKeyAlgorithms=ssh-ed25519 -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$hosts" "$DEPLOY_USER@$DEPLOY_HOST" bash -s -- "$GITHUB_SHA" <<'REMOTE'
-          set -Eeuo pipefail
-          revision=$1
-          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
-          cd projects/BotKit
-          git fetch origin main
-          git merge --ff-only "$revision"
-          test "$(git rev-parse HEAD)" = "$revision"
-          bash scripts/deploy.sh
-          REMOTE
+          ssh-keyscan -T 15 -t ed25519 157.228.114.185 > "$hosts"
+          test "$(ssh-keygen -lf "$hosts" -E sha256 | awk '{print $2}')" = 'SHA256:D29s6veodpMzxn6K89p6e5OIV0VjJ/QK/6pfS/qX/f8'
+          git archive --format=tar "$GITHUB_SHA" | \
+            ssh -i "$key" -o BatchMode=yes -o IdentitiesOnly=yes \
+              -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+              -o HostKeyAlgorithms=ssh-ed25519 -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$hosts" \
+              botkit-deploy@157.228.114.185 "deploy $GITHUB_SHA"

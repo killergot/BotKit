@@ -1,0 +1,53 @@
+#!/usr/bin/python3
+"""Restricted artifact receiver. Host Compose, firewall and deploy logic are immutable to CI."""
+import fcntl, os, re, shutil, subprocess, sys, tarfile, tempfile
+from pathlib import Path, PurePosixPath
+os.umask(0o077)
+if os.geteuid()!=0 or len(sys.argv)!=2 or not re.fullmatch('[0-9a-f]{40}',sys.argv[1]):
+ raise SystemExit('Invalid deployment request')
+revision=sys.argv[1]
+state=Path('/var/lib/botkit')
+with (state/'artifact-deploy.lock').open('w') as lock:
+ fcntl.flock(lock,fcntl.LOCK_EX | fcntl.LOCK_NB)
+ releases=Path('/opt/botkit/releases')
+ releases.mkdir(mode=0o755,parents=True,exist_ok=True)
+ stage=Path(tempfile.mkdtemp(prefix='.incoming-',dir=releases))
+ size=0; count=0; seen=set()
+ try:
+  with tarfile.open(fileobj=sys.stdin.buffer,mode='r|') as archive:
+   for member in archive:
+    path=PurePosixPath(member.name)
+    if path.is_absolute() or '..' in path.parts or not path.parts or path.parts[0] in {'.git','.env'}:
+     raise RuntimeError('Unsafe artifact path')
+    if not(member.isfile() or member.isdir()) or member.name in seen:
+     raise RuntimeError('Artifact links, special files and duplicate paths are forbidden')
+    seen.add(member.name); size+=member.size; count+=1
+    if size>32*1024*1024 or count>3000: raise RuntimeError('Artifact exceeds allowed size')
+    target=stage.joinpath(*path.parts)
+    if member.isdir(): target.mkdir(mode=0o755,parents=True,exist_ok=True)
+    else:
+     target.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
+     with archive.extractfile(member) as source, target.open('xb') as dest:
+      shutil.copyfileobj(source,dest)
+     target.chmod(0o644)
+  for name in ['Dockerfile','requirements.txt','main.py','alembic.ini','scripts/run.sh','scripts/check_runtime.py']:
+   if not (stage/name).is_file(): raise RuntimeError('Incomplete artifact')
+  if not (stage/'app').is_dir() or not (stage/'migrations').is_dir(): raise RuntimeError('Incomplete application')
+  # Never execute uploaded host deploy scripts or read an uploaded Compose file.
+  shutil.copyfile('/etc/botkit/compose.yml',stage/'docker-compose.yml')
+  (stage/'REVISION').write_text(revision+'\n')
+  for directory in [stage]+[p for p in stage.rglob('*') if p.is_dir()]: directory.chmod(0o755)
+  dest=releases/revision
+  if dest.exists():
+   # Retrying the identical revision requires identical files.
+   import hashlib
+   def manifest(root):
+    return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob('*') if p.is_file()}
+   if manifest(stage)!=manifest(dest): raise RuntimeError('Revision already exists with different content')
+   shutil.rmtree(stage)
+  else: stage.rename(dest)
+  environment={'PATH':'/usr/sbin:/usr/bin:/sbin:/bin','HOME':'/root','BOTKIT_REPO':str(dest),'BOTKIT_IMAGE_TAG':revision}
+  result=subprocess.run(['/usr/local/lib/botkit/deploy-release'],env=environment,stdin=subprocess.DEVNULL)
+  raise SystemExit(result.returncode)
+ finally:
+  if stage.exists(): shutil.rmtree(stage)
