@@ -19,6 +19,15 @@ are supplied with `--env-file /etc/botkit/compose.env`; there is no secret `.env
 inside release/build contexts. PostgreSQL/Redis/monitoring use separate internal
 networks. Firewall rules cover forwarding as well as host input.
 
+The PostgreSQL 16.15 security image is pinned in both the reviewed Compose and
+the server's `POSTGRES_IMAGE` setting. The server setting takes precedence over
+the Compose fallback: changing the repository alone does not upgrade production
+PostgreSQL. Keep the existing PG16 data directory, UID 70 and external volume.
+Before switching the image, verify a logical restore in isolation, take a fresh
+quiesced backup, and compare complete table digests, sequence values and schema
+revision while the bot is stopped. Update the pinned image in `last-good.json`
+after health checks so a later application rollback retains the patched database.
+
 SSH Match policy forces `/usr/local/lib/botkit/ssh-gate` for `botkit-deploy`,
 requires publickey, disables forwarding, user rc files and TTY. Its home and
 `.ssh/authorized_keys` are root-owned. The only sudo entry permits

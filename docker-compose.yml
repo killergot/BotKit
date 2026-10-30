@@ -25,8 +25,8 @@ x-app-env: &app-env
 services:
   postgres:
     <<: *restrictions
-    # Keep the existing PG major, image and data layout during privilege changes.
-    image: ${POSTGRES_IMAGE:-postgres@sha256:a5074487380d4e686036ce61ed6f2d363939ae9a0c40123d1a9e3bb3a5f344b4}
+    # PostgreSQL 16.15 security update; keep the existing PG16 data layout and UID.
+    image: ${POSTGRES_IMAGE:-postgres@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab}
     container_name: medicine_postgres
     user: "70:70"
     restart: unless-stopped
